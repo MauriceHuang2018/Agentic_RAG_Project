@@ -1,0 +1,79 @@
+[project]
+name = "agentic-rag-project"
+version = "0.1.0"
+description = "Enterprise Agentic RAG prototype (phase1-mvp)"
+readme = "README.md"
+authors = [
+    { name = "MauriceHuang", email = "huangjian609@163.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    # Web framework
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-multipart>=0.0.12",
+    # Validation & config
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "python-dotenv>=1.0",
+    # Database
+    "sqlalchemy>=2.0",
+    "alembic>=1.14",
+    "psycopg[binary]>=3.2",
+    # Vector store & cache
+    "qdrant-client>=1.12",
+    "redis>=5.2",
+    # Auth
+    "python-jose[cryptography]>=3.3",
+    "bcrypt>=4.0",
+    # Agent & LLM
+    "langgraph>=0.2",
+    "langchain-core>=0.3",
+    "litellm>=1.52",
+    # Async & HTTP
+    "celery>=5.4",
+    "httpx>=0.27",
+    # OCR & image (RapidOCR fallback per DESIGN R12)
+    "rapidocr-onnxruntime>=1.4",
+    "pillow>=11.0",
+    "prometheus-client>=0.21",
+    # Document parsing — format dispatch (PDF/DOCX/PPTX/XLSX) per parser_router DESIGN
+    # pymupdf: PDF text extraction + page-to-image for scanned/complex PDFs
+    "pymupdf>=1.24",
+    # python-docx: DOCX structured text + headings/lists extraction
+    "python-docx>=1.1",
+    # python-pptx: PPTX slide text extraction
+    "python-pptx>=1.0",
+    # openpyxl: XLSX table extraction with merged cells + headers
+    # (chosen over pandas because pandas is ~30MB and we don't need dataframe APIs)
+    "openpyxl>=3.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    # Fake Redis for retrieval tests (T2.2 / T2.4); production uses real Redis.
+    "fakeredis>=2.26",
+    # Real Postgres test container (test_indexer_upsert_idempotent): ON CONFLICT
+    # upsert semantics can't be exercised against SQLite. testcontainers spins up
+    # an ephemeral postgres:16 in Docker; each test uses an isolated schema.
+    "testcontainers[postgres]>=4.8",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    # Marks tests that boot an ephemeral Postgres via testcontainers.
+    # Skip with `SKIP_PG_TESTCONTAINER=1` when Docker is not available.
+    "requires_pg_container: needs a Postgres test container (testcontainers)",
+]
+
+[project.scripts]
+agentic-rag-project = "agentic_rag_project.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"

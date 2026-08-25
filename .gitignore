@@ -1,0 +1,56 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# uv (Python package manager)
+# - pyproject.toml and uv.lock are tracked (dependency declaration + reproducible builds)
+# - .venv is ignored above
+# - DO NOT add requirements.txt to this repo; use `uv add` to manage dependencies
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+tests/results/
+.demo
+demo2
+test_samples
+
+
+# Project data (local storage, never commit user docs)
+data/
+logs/
+*.log
+_tmp_storage/
+_tmp_storage/
+
+
+# users' docs
+docs/
+notes/
+Product_Design/
+AGENTS.md
+.claude
+
+
+# OS
+.DS_Store
+Thumbs.db
