@@ -1,0 +1,33 @@
+# Prometheus scrape config.
+# Scrape the api-gateway /metrics endpoint (exposed by FastAPI
+# prometheus_client middleware, added in T4.3).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: api-gateway
+    static_configs:
+      - targets: ["api-gateway:8000"]
+  - job_name: celery-worker
+    static_configs:
+      - targets: ["celery-worker:9804"]
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
+rule_files:
+  # Drift Alert rule (T4.4) is loaded from here; file is created in T4.4.
+  - "/etc/prometheus/rules/*.yml"
+
+# AlertManager (introduced in prod_launch_drift P0).
+# Prometheus pushes firing alerts here; AM handles deduplication,
+# grouping, inhibition, and routing to receivers (webhook/Slack/PagerDuty).
+# Receiver config + Go templates live in `infra/alertmanager/`.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']

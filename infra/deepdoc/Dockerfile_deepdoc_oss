@@ -1,0 +1,104 @@
+# Standalone RAGFlow DeepDoc Server (LitServe, port 9390).
+#
+# Why this exists:
+#   The previous compose setup pulled `infiniflow/ragflow:latest` and tried
+#   to use it as a single-container parser. RAGFlow is NOT a single
+#   container — it needs MySQL, Elasticsearch, Redis, and MinIO at runtime.
+#   This image ships ONLY the DeepDoc Server module (DLA + OCR + TSR), which
+#   is a stateless LitServe inference service with no external dependencies.
+#
+# Build:
+#   docker build -f infra/deepdoc/Dockerfile_deepdoc_oss \
+#                -t deepdoc_oss:latest infra/deepdoc
+#
+# Runtime contract (consumed by DeepDocClient.predict_*):
+#   GET  /health         -> 200 "ok"
+#   POST /predict/dla    multipart 'request'=<JPEG> -> { boxes: [{type, bbox}, ...] }
+#   POST /predict/ocr    multipart 'request'=<JPEG>, data 'operator'=rec|det -> { text }
+#   POST /predict/tsr    multipart 'request'=<JPEG> -> { html | cells }
+#
+# Stub strategy:
+#   RAGFlow ships `deepdoc/server/docker_stubs.py` (see file header) — a
+#   minimal stub generator that breaks the heavy `common`/`rag` import chain
+#   at exactly the points the OSS DeepDoc server touches. The official
+#   `Dockerfile_deepdoc_oss` in the RAGFlow repo uses the same pattern
+#   (RAGFlow main, Dockerfile_deepdoc_oss lines 52-53). We mirror it here
+#   instead of trying to install elasticsearch / infinity / azure / gcs /
+#   minio / s3 / oss SDKs.
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# System deps: git for sparse clone of the RAGFlow source tree.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Python deps for DeepDoc Server.
+# Core stack (from deepdoc/server/pyproject.toml):
+#   litserve / onnxruntime / pillow / huggingface_hub / pymupdf
+#   + opencv-python-headless / pyclipper / shapely / six / python-multipart
+# Note: beartype / pdfplumber / chardet / roman_numbers / cn2an / word2number
+# are NOT needed because docker_stubs.py replaces the modules that import them.
+RUN pip install --no-cache-dir \
+      litserve>=0.2 \
+      onnxruntime>=1.18 \
+      pillow>=11.0 \
+      huggingface_hub>=0.24 \
+      pymupdf>=1.24 \
+      opencv-python-headless \
+      pyclipper>=1.4.0 \
+      shapely \
+      six \
+      python-multipart
+
+# Sparse-clone the RAGFlow repo carrying only the `deepdoc/` subtree.
+# We do NOT pull `common/` or `rag/` — those get replaced by docker_stubs.
+RUN git clone --depth 1 --filter=blob:none --sparse https://github.com/infiniflow/ragflow.git /tmp/ragflow \
+ && cd /tmp/ragflow \
+ && git sparse-checkout set deepdoc \
+ && cp -r deepdoc /app/deepdoc \
+ && rm -rf /tmp/ragflow
+
+# RAGFlow ships a stub generator specifically for the OSS DeepDoc Docker
+# server (deepdoc/server/docker_stubs.py). Running it writes minimal
+# replacements for deepdoc/__init__.py, deepdoc/vision/__init__.py,
+# common/__init__.py, common/file_utils.py, common/misc_utils.py,
+# rag/__init__.py, rag/nlp/__init__.py, rag/utils/lazy_image.py under
+# /app — breaking the heavy full-stack import chain at exactly the points
+# the ONNX-only server touches. Stub TARGET defaults to /app.
+# Note: docker_stubs.py comes from the sparse clone above (copied into
+# /app/deepdoc/server/docker_stubs.py), so we cp it to /tmp before invoking.
+RUN cp /app/deepdoc/server/docker_stubs.py /tmp/docker_stubs.py \
+ && python3 /tmp/docker_stubs.py
+
+ENV PYTHONPATH=/app
+
+# Bake OSS ONNX models into the image layer so /predict/* is hot on first
+# request (no startup wait for HuggingFace download). download_deps.py targets
+# `InfiniFlow/deepdoc` and pulls layout.onnx / det.onnx / rec.onnx / tsr.onnx
+# / ocr.res into <target_dir>.
+#
+# The path MUST be `<base>/rag/res/deepdoc` because the OCR class in
+# deepdoc/vision/ocr.py (line 501) resolves its model dir from
+# `get_project_base_directory() + "rag/res/deepdoc"`. The docker_stubs
+# default for `get_project_base_directory()` is `/app`, so baking the
+# models at `/app/rag/res/deepdoc` makes OCR load them locally instead
+# of falling back to `huggingface_hub.snapshot_download`, which would
+# block the LitServe event loop on first boot and break health checks.
+ARG DEEPDOC_MODEL_DIR=/app/rag/res/deepdoc
+RUN python -m deepdoc.server.download_deps "$DEEPDOC_MODEL_DIR"
+
+EXPOSE 9390
+
+# Default: serve on 9390 from the deepdoc_server entry point, models from
+# /app/rag/res/deepdoc (baked into the image by download_deps above).
+# Container CMD can be overridden in compose if a different entry is preferred.
+CMD ["python", "-m", "deepdoc.server.deepdoc_server", \
+     "--port", "9390", \
+     "--model-dir", "/app/rag/res/deepdoc"]

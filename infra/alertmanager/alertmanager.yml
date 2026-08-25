@@ -1,0 +1,61 @@
+# AlertManager config for the Agentic RAG prototype.
+#
+# Chain:
+#   Prometheus (compute + trigger) -> AlertManager (dedupe, group, route)
+#     -> Receiver (webhook -> Slack / PagerDuty / Email in production)
+#
+# Receivers below are placeholders pointing at a local stub
+# (`http://localhost:5001/...`). Real webhook URLs are wired in
+# deployment via environment variables and don't live in git.
+#
+# Templates (`templates/*.tmpl`) demonstrate the `{{ .Labels.runbook }}`
+# join — see `default.tmpl` for the runbook-URL composition pattern.
+# Adding a new alert category = add a `runbook: <short>` label in
+# alerts.yaml and a directory on the wiki. No change here.
+
+global:
+  resolve_timeout: 5m
+
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+route:
+  receiver: 'rag-platform-default'
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - match:
+        team: rag-platform
+        severity: critical
+      receiver: 'rag-platform-critical'
+      continue: true
+    - match:
+        team: rag-platform
+        severity: warning
+      receiver: 'rag-platform-warning'
+      continue: false
+
+receivers:
+  # Placeholder webhooks — production swap is deployment-time config.
+  - name: 'rag-platform-default'
+    webhook_configs:
+      - url: 'http://localhost:5001/alerts/default'
+        send_resolved: true
+  - name: 'rag-platform-critical'
+    webhook_configs:
+      - url: 'http://localhost:5001/alerts/critical'
+        send_resolved: true
+  - name: 'rag-platform-warning'
+    webhook_configs:
+      - url: 'http://localhost:5001/alerts/warning'
+        send_resolved: true
+
+# critical suppresses same-alertname warning to avoid double-paging.
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'workspace_id']

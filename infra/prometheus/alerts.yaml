@@ -1,0 +1,316 @@
+# Prometheus alert rules for the Agentic RAG prototype (T4.3 finalization).
+#
+# These rules subscribe to the metrics exposed at `/metrics` (see
+# `docs/observability/README.md`). The metric set is defined in
+# `src/agentic_rag_project/observability/registry.py`.
+#
+# Severity levels:
+#   - info     — informational, no paging
+#   - warning  — paging on-call, business hours acceptable
+#   - critical — paging on-call 24/7, requires immediate attention
+#
+# Runbook references:
+#   Each rule carries a `runbook` label (short category like `rag/drift`)
+#   which AlertManager templates (`infra/alertmanager/templates/*.tmpl`)
+#   join with the wiki host. The matching `runbook_url` annotation is
+#   the same URL fully expanded — humans clicking in the Prometheus UI
+#   jump directly to the doc without AM round-tripping.
+
+groups:
+  - name: chat_api_health
+    interval: 30s
+    rules:
+      - alert: ChatHighErrorRate
+        expr: |
+          sum(rate(chat_requests_total{status="error"}[5m]))
+            /
+          sum(rate(chat_requests_total[5m]))
+            > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          team: rag-platform
+          runbook: chat/error-rate
+        annotations:
+          summary: "Chat error rate above 5% for 5+ minutes"
+          description: |
+            Chat 5xx error rate is {{ $value | humanizePercentage }} over the
+            last 5 minutes. Check FastAPI logs and recent deployments.
+          runbook_url: "https://wiki.internal/runbooks/rag/chat/error-rate"
+
+      - alert: ChatHighP99Latency
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(chat_latency_seconds_bucket[5m]))
+          ) > 8
+        for: 5m
+        labels:
+          severity: warning
+          team: rag-platform
+          runbook: chat/latency
+        annotations:
+          summary: "Chat P99 latency above 8s"
+          description: |
+            End-to-end chat P99 latency is {{ $value | humanizeDuration }}
+            over the last 5 minutes. Check LLM provider latency, Qdrant
+            response times, and Redis cache health.
+          runbook_url: "https://wiki.internal/runbooks/rag/chat/latency"
+
+      - alert: ChatHighP50Latency
+        expr: |
+          histogram_quantile(
+            0.50,
+            sum by (le) (rate(chat_latency_seconds_bucket[5m]))
+          ) > 4
+        for: 10m
+        labels:
+          severity: warning
+          team: rag-platform
+          runbook: chat/latency
+        annotations:
+          summary: "Chat P50 latency above 4s"
+          description: |
+            Median chat latency has been above 4s for 10+ minutes.
+            Likely a sustained degradation, not a transient spike.
+          runbook_url: "https://wiki.internal/runbooks/rag/chat/latency"
+
+  - name: retrieval_quality
+    interval: 1m
+    rules:
+      - alert: HallucinationRateUp
+        expr: |
+          max by (workspace_id) (eval_hallucination_rate) > 0.15
+        for: 15m
+        labels:
+          severity: critical
+          team: rag-platform
+          runbook: rag/hallucination
+        annotations:
+          summary: "Hallucination rate above 15% on workspace {{ $labels.workspace_id }}"
+          description: |
+            Hallucination rate (1 - faithfulness) is {{ $value | humanizePercentage }}
+            on workspace {{ $labels.workspace_id }} over the last 15 minutes
+            (3 eval-gauge refresh cycles). Investigate recent KB updates,
+            embedding model changes, or retrieval regressions.
+          runbook_url: "https://wiki.internal/runbooks/rag/rag/hallucination"
+
+      - alert: FaithfulnessDropping
+        expr: |
+          min by (workspace_id) (eval_faithfulness_score) < 0.7
+        for: 15m
+        labels:
+          severity: warning
+          team: rag-platform
+          runbook: rag/faithfulness
+        annotations:
+          summary: "Faithfulness below 0.7 on workspace {{ $labels.workspace_id }}"
+          description: |
+            Rolling mean faithfulness has dropped below 0.7
+            on workspace {{ $labels.workspace_id }}. This often
+            precedes a hallucination-rate alert by one refresh
+            cycle; investigate now.
+          runbook_url: "https://wiki.internal/runbooks/rag/rag/faithfulness"
+
+      - alert: LongContextFallbackAbuse
+        expr: |
+          sum(rate(long_context_fallback_total[15m]))
+            /
+          clamp_min(sum(rate(chat_requests_total[15m])), 1)
+            > 0.3
+        for: 15m
+        labels:
+          severity: warning
+          team: rag-platform
+          runbook: rag/fallback
+        annotations:
+          summary: "Long-context fallback used in >30% of requests"
+          description: |
+            The long-context fallback is being triggered for
+            {{ $value | humanizePercentage }} of chat requests over
+            the last 15 minutes. This usually means the two-stage
+            retrieval is failing confidence thresholds too often —
+            check HybridSearcher scores and keyword classifier.
+          runbook_url: "https://wiki.internal/runbooks/rag/rag/fallback"
+
+      - alert: EmbeddingCacheHitRateLow
+        expr: |
+          (
+            sum(rate(embedding_cache_hits_total[15m]))
+              /
+            clamp_min(sum(rate(retrieval_requests_total[15m])), 1)
+          ) < 0.3
+          and
+          sum(rate(retrieval_requests_total[15m])) > 0.5
+        for: 15m
+        labels:
+          severity: info
+          team: rag-platform
+          runbook: infra/redis-cache
+        annotations:
+          summary: "Embedding cache hit rate below 30%"
+          description: |
+            Embedding cache hit rate is {{ $value | humanizePercentage }}
+            over the last 15 minutes. Either Redis is degraded or the
+            cache key namespace has churned (new embedding model?).
+          runbook_url: "https://wiki.internal/runbooks/rag/infra/redis-cache"
+
+  - name: business_kpis
+    interval: 5m
+    rules:
+      - alert: CSATDropping
+        expr: |
+          min by (workspace_id) (csat_score) < 3.5
+        for: 30m
+        labels:
+          severity: warning
+          team: rag-platform
+          runbook: business/csat
+        annotations:
+          summary: "CSAT below 3.5 on workspace {{ $labels.workspace_id }}"
+          description: |
+            Rolling 7-day CSAT (likes / (likes + dislikes), 1-5 scale)
+            has been below 3.5 on workspace {{ $labels.workspace_id }}
+            for 30+ minutes. Check recent dislike categorizations
+            for a smoking gun.
+          runbook_url: "https://wiki.internal/runbooks/rag/business/csat"
+
+      - alert: DislikeAttributionSpike
+        expr: |
+          sum by (category_key) (rate(dislike_attribution_count[15m]))
+            > 0.005
+        for: 15m
+        labels:
+          severity: warning
+          team: rag-platform
+          runbook: feedback/attribution
+        annotations:
+          summary: "Dislike attribution spike on {{ $labels.category_key }}"
+          description: |
+            Category {{ $labels.category_key }} is receiving
+            {{ $value }} dislikes/sec over the last 15 minutes.
+            Sustained spikes usually map to a specific content /
+            retrieval / tone regression.
+          runbook_url: "https://wiki.internal/runbooks/rag/feedback/attribution"
+
+      - alert: KBActivationLow
+        expr: |
+          min by (workspace_id) (kb_activation_rate) < 0.05
+        for: 1h
+        labels:
+          severity: info
+          team: rag-platform
+          runbook: rag/kb-activation
+        annotations:
+          summary: "KB activation below 5% on workspace {{ $labels.workspace_id }}"
+          description: |
+            Only {{ $value | humanizePercentage }} of KB chunks are being
+            cited. This could mean (a) the KB is empty, (b) retrieval
+            is failing silently, or (c) direct answers don't reference
+            chunks. Investigate before users complain about thin answers.
+          runbook_url: "https://wiki.internal/runbooks/rag/rag/kb-activation"
+
+      - alert: OpenTicketsAccumulating
+        expr: |
+          sum by (status) (open_tickets_by_status{status!="resolved"})
+            > 50
+        for: 1h
+        labels:
+          severity: warning
+          team: rag-platform
+          runbook: business/tickets
+        annotations:
+          summary: "Open tickets ({{ $labels.status }}) above 50"
+          description: |
+            {{ $value }} tickets are currently in status
+            "{{ $labels.status }}". Investigate the support queue
+            or escalate to the customer-success team.
+          runbook_url: "https://wiki.internal/runbooks/rag/business/tickets"
+
+  - name: infrastructure
+    interval: 30s
+    rules:
+      - alert: AgentNodeFailureRate
+        expr: |
+          sum by (node_name) (rate(agent_node_total{outcome="error"}[5m]))
+            /
+          clamp_min(sum by (node_name) (rate(agent_node_total[5m])), 1)
+            > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: rag-platform
+          runbook: rag/agent-node
+        annotations:
+          summary: "Agent node {{ $labels.node_name }} failing >10%"
+          description: |
+            LangGraph node "{{ $labels.node_name }}" is failing
+            {{ $value | humanizePercentage }} of the time over the
+            last 5 minutes. Inspect agent_core logs for the recent
+            failure trace.
+          runbook_url: "https://wiki.internal/runbooks/rag/rag/agent-node"
+
+      - alert: NoChatTraffic
+        expr: |
+          sum(rate(chat_requests_total[10m])) == 0
+        for: 15m
+        labels:
+          severity: warning
+          team: rag-platform
+          runbook: infra/no-traffic
+        annotations:
+          summary: "No chat traffic for 15+ minutes"
+          description: |
+            The application has served 0 chat requests for the last
+            15 minutes. Either all traffic is blocked upstream, or
+            this pod is orphaned from the load balancer.
+          runbook_url: "https://wiki.internal/runbooks/rag/infra/no-traffic"
+
+  - name: drift_events
+    interval: 5m
+    rules:
+      - alert: DriftEventRateUp
+        expr: |
+          sum by (kind, metric_name) (
+            rate(drift_events_total{severity="critical"}[15m])
+          ) > 0
+        for: 5m
+        labels:
+          severity: critical
+          team: rag-platform
+          runbook: rag/drift
+        annotations:
+          summary: "Critical drift on {{ $labels.kind }}/{{ $labels.metric_name }}"
+          description: |
+            The drift detector (T4.4) recorded one or more critical-severity
+            drift events on `{{ $labels.kind }}` / `{{ $labels.metric_name }}`
+            over the last 15 minutes. Inspect the `drift_alerts` table:
+
+              SELECT * FROM drift_alerts
+              WHERE kind = '{{ $labels.kind }}'
+                AND metric_name = '{{ $labels.metric_name }}'
+                AND severity = 'critical'
+                AND triggered_at > now() - interval '1 hour'
+              ORDER BY triggered_at DESC;
+
+            Acknowledge after triage by setting `acknowledged = true`.
+          runbook_url: "https://wiki.internal/runbooks/rag/rag/drift"
+
+      - alert: DriftEventSustained
+        expr: |
+          sum by (kind, metric_name) (
+            rate(drift_events_total{severity=~"warning|critical"}[1h])
+          ) > 0.05
+        for: 30m
+        labels:
+          severity: warning
+          team: rag-platform
+          runbook: rag/drift
+        annotations:
+          summary: "Sustained warning/critical drift on {{ $labels.kind }}/{{ $labels.metric_name }}"
+          description: |
+            Warning or critical drift events have been firing for 30+
+            minutes at >0.05 events/sec on
+            `{{ $labels.kind }}` / `{{ $labels.metric_name }}`. Sustained
+            drift usually maps to a real quality regression — page on-call.
+          runbook_url: "https://wiki.internal/runbooks/rag/rag/drift"

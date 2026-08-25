@@ -1,0 +1,51 @@
+# Prometheus scrape + alert config for the Agentic RAG prototype.
+#
+# Companion to `alerts.yaml` in the same directory. This file is
+# intentionally minimal — it assumes Prometheus runs as a sibling
+# container in the same Docker network. Adapt `targets:` to your
+# service-discovery mechanism of choice (file_sd, k8s_sd, etc.)
+# before going to production.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: "agentic-rag-prototype"
+
+# Load the alert + record rules.
+rule_files:
+  - "alerts.yaml"
+
+# Alertmanager target — replace with the real alertmanager URL when
+# the platform team provisions one. T4.3 ships a no-op stub.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - "alertmanager:9093"
+
+scrape_configs:
+  # The FastAPI /metrics endpoint. IP-allowlisted + bearer token gated
+  # in the app layer (see docs/observability/README.md). The bearer
+  # token is passed via the `authorization.credentials_file` directive.
+  - job_name: "agentic-rag-api"
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets:
+          - "agentic-rag-app:8000"
+        labels:
+          service: "agentic-rag-api"
+          tier: "backend"
+    # NOTE: When the bearer token is enabled, uncomment the next block
+    # and provision the credentials file at the path below.
+    #
+    # authorization:
+    #   type: Bearer
+    #   credentials_file: /etc/prometheus/secret/metrics_bearer_token
+
+  # Prometheus itself — handy for sanity-checking rule evaluation.
+  - job_name: "prometheus"
+    static_configs:
+      - targets:
+          - "localhost:9090"

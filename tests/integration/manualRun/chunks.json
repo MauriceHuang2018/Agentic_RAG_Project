@@ -1,0 +1,44 @@
+{
+  "doc_id": "smoke-tabel_Picture_康波周期表",
+  "parents": [
+    {
+      "chunk_id": "87e73b19-9984-4686-b114-25a2ba83f62b",
+      "document_id": "smoke-tabel_Picture_康波周期表",
+      "content": "# Page 1\n\n康波周期表\n\n万物皆周期人生发财靠康波·历史不会重演但总会惊人的相似\n\n万物皆周期人生发财靠康波·历史不会重演但总会惊人的相似\n\n[figure @ page 1, bbox=(60,145,1259,639)]\n\n万物皆周期人生发财靠康波·历史不会重演但总会惊人的相似",
+      "section_heading": "Page 1",
+      "page_start": 0,
+      "page_end": 0,
+      "child_ids": [
+        "e37f2eb6-0ecd-49ca-9b70-a123739df0bc",
+        "821e3195-9606-4f10-b82d-a3c01f138a48",
+        "0de73dca-2fd0-4fca-83a7-ad036cf88ced"
+      ]
+    }
+  ],
+  "children": [
+    {
+      "chunk_id": "e37f2eb6-0ecd-49ca-9b70-a123739df0bc",
+      "document_id": "smoke-tabel_Picture_康波周期表",
+      "parent_id": "87e73b19-9984-4686-b114-25a2ba83f62b",
+      "content": "康波周期表\n\n万物皆周期人生发财靠康波·历史不会重演但总会惊人的相似\n\n万物皆周期人生发财靠康波·历史不会重演但总会惊人的相似",
+      "block_kind": "text",
+      "page": 0
+    },
+    {
+      "chunk_id": "821e3195-9606-4f10-b82d-a3c01f138a48",
+      "document_id": "smoke-tabel_Picture_康波周期表",
+      "parent_id": "87e73b19-9984-4686-b114-25a2ba83f62b",
+      "content": "[figure @ page 1, bbox=(60,145,1259,639)]",
+      "block_kind": "figure",
+      "page": 0
+    },
+    {
+      "chunk_id": "0de73dca-2fd0-4fca-83a7-ad036cf88ced",
+      "document_id": "smoke-tabel_Picture_康波周期表",
+      "parent_id": "87e73b19-9984-4686-b114-25a2ba83f62b",
+      "content": "万物皆周期人生发财靠康波·历史不会重演但总会惊人的相似",
+      "block_kind": "figure_caption",
+      "page": 0
+    }
+  ]
+}

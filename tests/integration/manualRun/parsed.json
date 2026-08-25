@@ -1,0 +1,138 @@
+{
+  "pdf_path": "D:\\DataBack\\AI-Assistant-Py-Prj\\DocGPT_RAG_Prototype\\Agentic_RAG_Project\\test_samples\\excel_High School Research-2021.xlsx",
+  "pdf_name": "excel_High School Research-2021.xlsx",
+  "doc_id": "smoke-excel_High School Research-2021",
+  "parsed_doc": {
+    "document_name": "excel_High School Research-2021.xlsx",
+    "format": "xlsx",
+    "sections": [
+      {
+        "heading": "Sheet1",
+        "level": 1,
+        "blocks": [
+          {
+            "block_id": "2987268f-72b3-4a7c-85c5-04c69f7c46d5",
+            "kind": "table",
+            "text": ": S.N. | : School Name | : None | : 最近3年统招录取分数线 | : 最近3年统招录取分数线 | : 最近3年统招录取分数线 | : None | : None | 考分：: 与重点线线差 | 599: 与重点线线差 | 位次：: 与重点线线差 | 5429: 与重点线线差 | : 学校位置 | : 学校特色 | : 班型 | : 住宿 | : 餐饮 | : 招生电话 | : None",
+            "level": 0,
+            "page": 0,
+            "bbox": null,
+            "meta": {}
+          },
+          {
+            "block_id": "82ad9c31-9b5e-4cce-836a-1c30615a71ac",
+            "kind": "table",
+            "text": ": S.N. | : School Name | : 2021 | : 2020 | : 2019 | : 2018 | : 2021线差 | : 2021重点线 | 考分：: 2020线差 | 599: 2020重点线 | 位次：: 2019线差 | 5429: 2019重点线 | : 学校位置 | : 学校特色 | : 班型 | : 住宿 | : 餐饮 | : 招生电话 | : 班型",
+            "level": 0,
+            "page": 0,
+            "bbox": null,
+            "meta": {}
+          },
+          {
+            "block_id": "4943182b-4ae9-48be-87e3-8ede60248055",
+            "kind": "table",
+            "text": ": 1 | : 九外 | : 620 | : 615 | : 614 | : 602 | : 64 | : 556 | 考分：: 63 | 599: 552 | 位次：: 61 | 5429: 553 | : 锦江区东三环 | : None | : 2020年招4个班 | : 可住宿，可走读；每个寝室均为4人间，配备有卫生间、盥洗室、写字台和衣柜，供应热水，配置空调 | : None | : None | : None",
+            "level": 0,
+            "page": 0,
+            "bbox": null,
+            "meta": {}
+          },
+          {
+            "block_id": "37527376-c791-410a-856d-acac0b7e3d06",
+            "kind": "table",
+            "text": ": 2 | : 石室北湖校区 | : None | : 613 | : 612 | : 605 | : -552 | : None | 考分：: 61 | 599: None | 位次：: 59 | 5429: None | : 成华区龙潭立交旁 | : None | : 2020年招8个班 | : 可住宿，4-6人间，有空调 | : None | : 18200416916、18200416917 | : None",
+            "level": 0,
+            "page": 0,
+            "bbox": null,
+            "meta": {}
+          },
+          {
+            "block_id": "f7690850-c43f-4a38-abc3-2c2fadb90773",
+            "kind": "table",
+            "text": ": 3 | : 师大附中 | : 610 | : 608 | : 610 | : 599 | : 58 | : None | 考分：: 56 | 599: None | 位次：: 57 | 5429: None | : 锦江区劼人路，7号线可直达 | : None | : 2020年招8个班 | : 可住宿，6-8人间，有空调 | : None | : 84760224 | : 火箭班/2班\n\n去年实验班610分",
+            "level": 0,
+            "page": 0,
+            "bbox": null,
+            "meta": {}
+          },
+          {
+            "block_id": "5669e198-e4fd-4984-8811-df728d1937ca",
+            "kind": "table",
+            "text": ": None | : 北二外成都 | : None | : 598 | : None | : None | : -552 | : None | 考分：: 46 | 599: None | 位次：: None | 5429: None | : None | : None | : None | : 住宿，有空调 | : None | : 17318941881 | : None",
+            "level": 0,
+            "page": 0,
+            "bbox": null,
+            "meta": {}
+          },
+          {
+            "block_id": "8830e675-3300-4293-8ac6-732ed82092e5",
+            "kind": "table",
+            "text": ": 4 | : 列五中学 | : None | : 592 | : 597 | : 585 | : -552 | : None | 考分：: 40 | 599: None | 位次：: 44 | 5429: None | : 成华区 | : None | : None | : None | : None | : None | : 创新班",
+            "level": 0,
+            "page": 0,
+            "bbox": null,
+            "meta": {}
+          },
+          {
+            "block_id": "a33a4e51-e255-4189-b39d-f76939bce34c",
+            "kind": "table",
+            "text": ": 5 | : 盐道街中学 | : 590 | : 587 | : 589 | : None | : 38 | : None | 考分：: 35 | 599: None | 位次：: 36 | 5429: None | : 成都市滨江中路7号 | : 百年办学，课外活动不是很多，但艺术节办得挺好 | : 院士班 （平行班很多都是借读的） | : None | : None | : 028-86658652 | : 晚自习走读生上到9：30，住校生上到10：20，但走读生也可以申请到10：20",
+            "level": 0,
+            "page": 0,
+            "bbox": null,
+            "meta": {}
+          },
+          {
+            "block_id": "38a28d3d-b62c-40b1-9b3d-7c9de6640d45",
+            "kind": "table",
+            "text": ": 6 | : 川大附中/12中 | : 600 | : 583 | : 598 | : 584 | : 48 | : None | 考分：: 31 | 599: None | 位次：: 45 | 5429: None | : 九眼桥附近 | : 近百年办学，特色空军班 | : 博士班(竞赛相关)、实验班、平行班 | : None | : None | : 028-85223369 | : 实验班,600分进A2，605分进A1",
+            "level": 0,
+            "page": 0,
+            "bbox": null,
+            "meta": {}
+          },
+          {
+            "block_id": "264c1dbf-27c6-4c7d-b14e-01306d1d065b",
+            "kind": "table",
+            "text": ": 7 | : 田家炳中学 | : 575 | : 575 | : 574 | : 553 | : 23 | : None | 考分：: 23 | 599: None | 位次：: 21 | 5429: None | : 九眼桥附近 | : None | : None | : None | : None | : None | : None",
+            "level": 0,
+            "page": 0,
+            "bbox": null,
+            "meta": {}
+          },
+          {
+            "block_id": "ff7d3050-696f-420b-856c-b3fda686c76e",
+            "kind": "table",
+            "text": ": 8 | : 树德协进中学 | : None | : 562 | : 564 | : 543 | : -552 | : None | 考分：: 10 | 599: None | 位次：: 11 | 5429: None | : 青羊区西胜街/宽窄巷子，4号线可直达 | : 近百年办学。600分可进：成都七中网络直播班和北京四中翻转课堂班（也叫拔尖创新人才早期培养基地班） | : 2020年招9个班 | : None | : None | : None | : None",
+            "level": 0,
+            "page": 0,
+            "bbox": null,
+            "meta": {}
+          },
+          {
+            "block_id": "887970f5-7cb6-4fe7-9d0e-cc6b4c7d4165",
+            "kind": "table",
+            "text": ": 9 | : 20中 | : None | : None | : None | : None | : -552 | : None | 考分：: -552 | 599: None | 位次：: -553 | 5429: None | : None | : None | : None | : None | : None | : None | : 实验班,592分进598班",
+            "level": 0,
+            "page": 0,
+            "bbox": null,
+            "meta": {}
+          },
+          {
+            "block_id": "982d0275-5a8e-4f94-be7b-de35c99e4d96",
+            "kind": "table",
+            "text": ": None | : 华西中学 | : None | : 567 | : 567 | : 550 | : -552 | : None | 考分：: 15 | 599: None | 位次：: 14 | 5429: None | : None | : None | : None | : None | : None | : None | : None",
+            "level": 0,
+            "page": 0,
+            "bbox": null,
+            "meta": {}
+          }
+        ],
+        "page_start": 0,
+        "page_end": 0
+      }
+    ],
+    "ocr_used": false,
+    "page_count": 1
+  }
+}

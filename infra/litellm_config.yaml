@@ -1,0 +1,83 @@
+# LiteLLM proxy configuration.
+#
+# `model_list` enumerates the routable models with their credentials.
+# `router_settings.fallbacks` chains primary -> backups so a transient
+# outage degrades to the next model in the chain automatically.
+# `roles` is the single source of truth for which registered model
+# plays which role (primary chat / 128K fallback / RAG embedding).
+# `config.py` reads `roles` at module import to populate the defaults
+# of `litellm_model` / `litellm_long_context_model` /
+# `litellm_embedding_model`. Sysadmin can swap models by editing the
+# `roles` block + `model_list`; env vars (`LITELLM_MODEL`, etc.) still
+# override these defaults.
+#
+# Override placeholders via the host's `.env` (compose mounts nothing
+# secret into this file).
+
+model_list:
+  - model_name: qwen3.5-plus
+    litellm_params:
+      model: dashscope/qwen3.5-plus
+      api_key: os.environ/DASHSCOPE_API_KEY
+      api_base: os.environ/Ali_API_BASE_URL
+  - model_name: deepseek-v4-flash-0731
+    litellm_params:
+      model: dashscope/deepseek-v4-flash-0731
+      api_key: os.environ/DASHSCOPE_API_KEY
+      api_base: os.environ/Ali_API_BASE_URL
+  - model_name: qwen3.7-plus
+    litellm_params:
+       model: dashscope/qwen3.7-plus
+       api_key: os.environ/DASHSCOPE_API_KEY
+       api_base: os.environ/Ali_API_BASE_URL
+  # Long-context model — used by retrieval_direct.long_context_fallback
+  # (NOT on the default chat path). Selected via `roles.long_context`.
+  - model_name: claude-sonnet-4-5
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_API_KEY
+  # Primary chat model — selected via `roles.primary`. Proxy will WARN
+  # at startup if OPENAI_API_KEY is not set in the host env; model
+  # registration still succeeds (the key is only consulted at call time).
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+  # Embedding model for RAG chunks (BGE-M3 = 1024 dim).
+  - model_name: text-embedding-v4
+    litellm_params:
+      model: dashscope/text-embedding-v4
+      api_base: os.environ/Ali_API_BASE_URL
+      api_key: os.environ/DASHSCOPE_API_KEY
+      
+
+router_settings:
+  num_retries: 3
+  timeout: 60
+  fallbacks:
+    - qwen3.5-plus: [deepseek-v4-flash-0731, qwen3.7-plus]
+    - deepseek-v4-flash-0731: [qwen3.5-plus, qwen3.7-plus]
+    - gpt-4o: [claude-sonnet-4-5, qwen3.5-plus]
+    - claude-sonnet-4-5: [gpt-4o, qwen3.5-plus]
+
+# Role mapping — single source of truth for which registered model plays
+# each role. `config.py` reads this block to populate the defaults of
+# `litellm_model` / `litellm_long_context_model` /
+# `litellm_embedding_model`. Each value MUST match a `model_name` in
+# `model_list` above (enforced by tests/test_compose.py).
+roles:
+  primary: gpt-4o
+  long_context: claude-sonnet-4-5
+  embedding: text-embedding-v4
+
+general_settings:
+  telemetry: False
+  # database_url: "postgresql://rag:os.environ/POSTGRES_PASSWORD@postgres:5432/rag_db"
+  # 24h cache TTL for identical prompts (DESIGN 4.5)
+  cache: True
+  cache_params:
+    type: redis
+    host: redis
+    port: 6379
+    db: 3
+    ttl: 86400

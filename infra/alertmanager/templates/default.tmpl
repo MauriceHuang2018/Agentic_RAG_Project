@@ -1,0 +1,23 @@
+{{ define "rag.default.title" }}
+[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}
+{{ end }}
+
+{{ define "rag.default.text" }}
+{{ range .Alerts }}
+*Alert*:     {{ .Labels.alertname }}
+*Severity*:  {{ .Labels.severity }}
+*Team*:      {{ .Labels.team }}
+*Workspace*: {{ .Labels.workspace_id | default "global" }}
+*Kind*:      {{ .Labels.kind | default "n/a" }}
+*Metric*:    {{ .Labels.metric_name | default "n/a" }}
+*Runbook*:   https://wiki.internal/runbooks/rag/{{ .Labels.runbook | default "general" }}
+*Summary*:   {{ .Annotations.summary }}
+*Details*:   {{ .Annotations.description }}
+{{ end }}
+{{ end }}
+
+{{ define "rag.resolved.text" }}
+{{ range .Alerts }}
+✅ Resolved: {{ .Labels.alertname }} (severity={{ .Labels.severity }})
+{{ end }}
+{{ end }}
