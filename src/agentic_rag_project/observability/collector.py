@@ -20,6 +20,12 @@ instead of a crashloop.
 
 Both tasks live in `doc_processor.tasks` (the project's Celery
 app) and import the refresh functions from here.
+
+M4.4 refactor: the per-workspace CSAT + dislike-attribution
+SQL blocks were extracted into `observability.csat_queries` so
+both the L3 collector (this module) and the dashboard API share
+a single source of truth. Behaviour is unchanged — the gauge
+writes below match the original inline SQL byte-for-byte.
 """
 
 from __future__ import annotations
@@ -39,6 +45,10 @@ from agentic_rag_project.feedback.models import (
     FeedbackCategory,
     FeedbackRating,
     FeedbackTicket,
+)
+from agentic_rag_project.observability.csat_queries import (
+    compute_csat_summary,
+    compute_dislike_attribution_distribution,
 )
 from agentic_rag_project.observability.registry import get_metrics
 
@@ -184,57 +194,41 @@ def refresh_business_gauges(
     # ---- per-workspace: CSAT + dislike attribution rate ----
     for ws_id in ws_ids:
         try:
-            like_count = session.execute(
-                select(func.count(Feedback.id)).where(
-                    Feedback.workspace_id == ws_id,
-                    Feedback.rating == FeedbackRating.LIKE.value,
-                    Feedback.created_at >= cutoff,
-                )
-            ).scalar_one()
-            dislike_count = session.execute(
-                select(func.count(Feedback.id)).where(
-                    Feedback.workspace_id == ws_id,
-                    Feedback.rating == FeedbackRating.DISLIKE.value,
-                    Feedback.created_at >= cutoff,
-                )
-            ).scalar_one()
+            summary = compute_csat_summary(
+                session,
+                workspace_id=ws_id,
+                window_days=window_days,
+            )
         except SQLAlchemyError as exc:
-            logger.warning("L3 like/dislike count failed for %s: %s", ws_id, exc)
+            logger.warning("L3 csat summary failed for %s: %s", ws_id, exc)
             continue
 
-        total = like_count + dislike_count
-        csat = like_count / total if total else 0.0
-        metrics.csat_score.labels(workspace_id=str(ws_id)).set(csat)
+        metrics.csat_score.labels(workspace_id=str(ws_id)).set(summary.csat_score)
         written += 1
 
-        # Dislike attribution rate per category.
+        # Dislike attribution rate per category. Behaviour parity
+        # with the pre-M4.4 inline SQL: gauge value is
+        # `category_dislike / workspace_total_dislike` (NOT
+        # `category_dislike / category_total` — see
+        # `csat_queries.compute_dislike_attribution_distribution`
+        # docstring for the rationale).
         try:
-            per_cat = session.execute(
-                select(
-                    FeedbackCategory.key,
-                    func.count(Feedback.id),
-                )
-                .join(
-                    FeedbackAttribution,
-                    FeedbackAttribution.category_id == FeedbackCategory.id,
-                )
-                .join(
-                    Feedback,
-                    Feedback.id == FeedbackAttribution.feedback_id,
-                )
-                .where(
-                    Feedback.workspace_id == ws_id,
-                    Feedback.rating == FeedbackRating.DISLIKE.value,
-                    Feedback.created_at >= cutoff,
-                )
-                .group_by(FeedbackCategory.key)
-            ).all()
+            per_cat = compute_dislike_attribution_distribution(
+                session,
+                workspace_id=ws_id,
+                window_days=window_days,
+            )
         except SQLAlchemyError as exc:
             logger.warning("L3 dislike attribution failed for %s: %s", ws_id, exc)
-            per_cat = []
+            per_cat = {}
 
-        for cat_key, n in per_cat:
-            rate = (n / dislike_count) if dislike_count else 0.0
+        workspace_dislike_total = summary.dislike_count
+        for cat_key, n in per_cat.items():
+            rate = (
+                float(n) / workspace_dislike_total
+                if workspace_dislike_total
+                else 0.0
+            )
             metrics.feedback_dislike_rate.labels(
                 workspace_id=str(ws_id), category_key=cat_key
             ).set(rate)

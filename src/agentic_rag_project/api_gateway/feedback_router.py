@@ -27,12 +27,16 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from agentic_rag_project.api_gateway.dependencies import (
     UserContext,
+    get_audit_service,
     get_current_user,
 )
+from agentic_rag_project.audit import AuditEvent, AuditService
+from agentic_rag_project.db.models.conversations import Conversation, Message
 from agentic_rag_project.db.session import get_db
 from agentic_rag_project.feedback import (
     AttributionStatus,
@@ -195,6 +199,7 @@ def post_feedback(
     payload: SubmitFeedbackRequest,
     ctx: Annotated[UserContext, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db)],
+    audit_service: Annotated[AuditService, Depends(get_audit_service)],
 ) -> SubmitFeedbackResponse:
     """Record user feedback and run the auto-attributor cascade."""
     message_id = _parse_uuid(payload.message_id, field_name="message_id")
@@ -218,25 +223,91 @@ def post_feedback(
             detail="user is not a member of any workspace",
         )
 
-    service = _get_feedback_service(session, ctx)
-    try:
-        result = service.submit(
-            message_id=message_id,
-            user_id=ctx.user_id,
-            workspace_id=workspace_id,
-            rating=payload.rating,
-            comment=payload.comment,
-            ragas_scores=payload.ragas_scores,
-            retrieved_chunks=payload.retrieved_chunks,
-            query=payload.query,
-            answer=payload.answer,
-            reference_year=payload.reference_year,
+    # F2 — route-layer fail-fast. Verify the target message actually
+    # belongs to the workspace the caller claims. The service does
+    # the same check as defense-in-depth (see `service.submit`), but
+    # we catch the workspace mismatch at the route so the user gets a
+    # proper 403 instead of a generic 500 from the service layer.
+    #
+    # Targeted JOIN instead of `session.get(Message, mid).conversation
+    # .workspace_id` — see `service.submit` for the same rationale:
+    # avoid SELECT * against tables that may not carry every column
+    # in the legacy test harness.
+    message_workspace_id = session.execute(
+        select(Conversation.workspace_id)
+        .join(Message, Message.conversation_id == Conversation.id)
+        .where(Message.id == message_id)
+    ).scalar_one_or_none()
+    if message_workspace_id is None:
+        raise HTTPException(
+            status_code=404, detail=f"message_not_found: {message_id}"
         )
-    except Exception as exc:
-        logger.exception("feedback submit failed")
-        raise HTTPException(status_code=500, detail="internal_error") from exc
-    finally:
-        session.commit()
+    if not ctx.is_super_admin and message_workspace_id != workspace_id:
+        audit_service.record(
+            AuditEvent(
+                user_id=str(ctx.user_id),
+                action="access_denied",
+                extra={
+                    "reason": "feedback_message_workspace_mismatch",
+                    "requested_message_id": str(message_id),
+                    "payload_workspace_id": str(workspace_id),
+                    "message_workspace_id": (
+                        str(message_workspace_id)
+                        if message_workspace_id is not None
+                        else None
+                    ),
+                },
+            )
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="message_not_in_workspace",
+        )
+
+    service = _get_feedback_service(session, ctx)
+    # M5 F3 — service is the sole owner of transaction boundaries.
+    # The route no longer wraps `service.submit` in try/finally to
+    # commit; the service commits on success and rolls back on
+    # failure. The route only converts domain exceptions into HTTP
+    # status codes — FastAPI's `get_db` dependency closes the
+    # session at request end without committing, so leaving commit
+    # in `finally` would silently persist partial state if the
+    # service raised mid-transaction.
+    result = service.submit(
+        message_id=message_id,
+        user_id=ctx.user_id,
+        workspace_id=workspace_id,
+        rating=payload.rating,
+        comment=payload.comment,
+        ragas_scores=payload.ragas_scores,
+        retrieved_chunks=payload.retrieved_chunks,
+        query=payload.query,
+        answer=payload.answer,
+        reference_year=payload.reference_year,
+    )
+
+    # M5 — record a `feedback_submit` audit on success. The
+    # `access_denied` audit for F2 cross-tenant attempts is recorded
+    # above (route-layer fail-fast). Together they form the full
+    # audit trail for the feedback endpoint without leaking data
+    # about the actual content (comment is intentionally NOT logged).
+    # `workspace_id` rides in `extra` because the AuditEvent dataclass
+    # doesn't carry a top-level workspace column — it's denormalised
+    # from `user_id` + the request context, never from the payload
+    # (avoid spoofing).
+    audit_service.record(
+        AuditEvent(
+            user_id=str(ctx.user_id),
+            action="feedback_submit",
+            extra={
+                "feedback_id": str(result.feedback_id),
+                "message_id": str(message_id),
+                "workspace_id": str(workspace_id),
+                "rating": payload.rating,
+                "attribution_status": result.attribution_status.value,
+            },
+        )
+    )
 
     return SubmitFeedbackResponse(
         feedback_id=str(result.feedback_id),
@@ -259,10 +330,37 @@ def get_feedback_by_message(
     message_id: str,
     ctx: Annotated[UserContext, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db)],
+    audit_service: Annotated[AuditService, Depends(get_audit_service)],
 ) -> FeedbackByMessageResponse:
     mid = _parse_uuid(message_id, field_name="message_id")
     repo = FeedbackRepository(session)
-    items = repo.get_feedback_by_message(mid)
+    # F1 — repo-layer workspace filter (single source of truth).
+    # `ctx.workspace_ids` is a frozenset built by `get_current_user`
+    # from the user's RBAC roles. Super-admins see all workspaces;
+    # regular users only see workspaces they're a member of.
+    items = repo.get_feedback_by_message(mid, workspace_ids=list(ctx.workspace_ids))
+    if not items:
+        # Cross-tenant probe (or just no data). Either way, return 404
+        # to avoid leaking whether the message exists. The audit row
+        # distinguishes the cross-tenant attempt from a benign miss
+        # via `reason=cross_workspace_read`.
+        if not ctx.is_super_admin:
+            audit_service.record(
+                AuditEvent(
+                    user_id=str(ctx.user_id),
+                    action="access_denied",
+                    extra={
+                        "reason": "cross_workspace_read",
+                        "requested_message_id": str(mid),
+                        "actor_workspace_ids": [
+                            str(w) for w in ctx.workspace_ids
+                        ],
+                    },
+                )
+            )
+        raise HTTPException(
+            status_code=404, detail=f"feedback not found for message: {mid}"
+        )
     return FeedbackByMessageResponse(
         message_id=str(mid),
         items=[

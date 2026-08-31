@@ -25,8 +25,10 @@ import logging
 import uuid
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from agentic_rag_project.db.models.conversations import Conversation, Message
 from agentic_rag_project.feedback.attributor import (
     AttributionResult,
     AutoAttributor,
@@ -110,6 +112,82 @@ class FeedbackService:
              triage can finish manually.
         """
         repo = self._repo
+
+        # F3 — service is the sole owner of the transaction boundary.
+        # Commit on success, rollback on any failure (including the
+        # F2 PermissionError below). FastAPI's `get_db` only closes
+        # the session; without an explicit commit nothing persists.
+        # The previous design had `finally: session.commit()` in the
+        # route, which silently persisted partial state on failure.
+        try:
+            result = self._submit_impl(
+                repo=repo,
+                message_id=message_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                rating=rating,
+                comment=comment,
+                ragas_scores=ragas_scores,
+                retrieved_chunks=retrieved_chunks,
+                query=query,
+                answer=answer,
+                reference_year=reference_year,
+            )
+        except Exception:
+            self._session.rollback()
+            raise
+        else:
+            self._session.commit()
+        return result
+
+    def _submit_impl(
+        self,
+        *,
+        repo: FeedbackRepository,
+        message_id: uuid.UUID,
+        user_id: uuid.UUID,
+        workspace_id: uuid.UUID,
+        rating: str,
+        comment: str | None,
+        ragas_scores: dict | None,
+        retrieved_chunks: list[str] | None,
+        query: str | None,
+        answer: str | None,
+        reference_year: int | None,
+    ) -> SubmitResult:
+        """Inner body of `submit` — pure orchestration, no transaction.
+
+        Runs inside the try/except/else in `submit` so the caller
+        can commit on success or rollback on any raise. Splitting
+        the body out keeps the transaction wrapper readable.
+        """
+
+        # F2 — defense-in-depth: validate that the target message
+        # actually belongs to the workspace the caller claims. The
+        # route layer does the same check and returns 403 fail-fast;
+        # this service-layer check protects non-HTTP callers (admin
+        # scripts, CLI, future endpoints) that bypass the route.
+        # M5 design decision 5.
+        #
+        # Implementation note: we deliberately avoid
+        # `self._session.get(Message, mid).conversation.workspace_id`
+        # because both `session.get` and the lazy-load trigger
+        # `SELECT *` against tables that may not carry every column
+        # in the legacy test harness (which only declares the minimum
+        # columns for the F2 lookup). A targeted JOIN that selects
+        # exactly one column (`workspace_id`) is portable across
+        # SQLite test envs and the production PG schema.
+        message_workspace_id = self._session.execute(
+            select(Conversation.workspace_id)
+            .join(Message, Message.conversation_id == Conversation.id)
+            .where(Message.id == message_id)
+        ).scalar_one_or_none()
+        if message_workspace_id is None:
+            raise LookupError(f"message not found: {message_id}")
+        if message_workspace_id != workspace_id:
+            raise PermissionError(
+                f"message {message_id} does not belong to workspace {workspace_id}"
+            )
 
         # 1 — feedback row.
         feedback = repo.create_feedback(
@@ -252,6 +330,13 @@ class FeedbackService:
                     name_zh=spec.name_zh,
                     description=spec.description,
                     is_system=True,
+                    # `label` is a legacy NOT NULL column from the
+                    # 0001 migration; the ORM no longer reads it, but
+                    # the column is still NOT NULL until a future
+                    # 0011 migration drops or relaxes it. Mirror
+                    # `name_zh` so new seed rows satisfy the
+                    # constraint without touching the schema here.
+                    label=spec.name_zh,
                 )
             )
         return inserted
@@ -291,9 +376,15 @@ class FeedbackService:
         return self._repo.get_feedback(feedback_id)
 
     def get_feedback_by_message(
-        self, message_id: uuid.UUID
+        self,
+        message_id: uuid.UUID,
+        *,
+        workspace_ids: list[uuid.UUID],
     ) -> list[Feedback]:
-        return list(self._repo.get_feedback_by_message(message_id))
+        """F1 wrapper — repo-layer workspace filter is the single source."""
+        return list(
+            self._repo.get_feedback_by_message(message_id, workspace_ids=workspace_ids)
+        )
 
 
 def _default_name(key: str) -> str:

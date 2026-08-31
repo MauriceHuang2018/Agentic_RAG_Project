@@ -43,6 +43,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -83,6 +84,12 @@ class FeedbackCategory(_Base):
     )
     key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     name_zh: Mapped[str] = mapped_column(String(128), nullable=False)
+    # `label` is a legacy NOT NULL column from the 0001 migration.
+    # The ORM no longer reads it, but the column stays in the schema
+    # for compatibility with the existing alembic chain. Mirror
+    # `name_zh` at write time so new rows satisfy the constraint;
+    # a future 0011 migration can drop or relax it.
+    label: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -148,6 +155,19 @@ class Feedback(_Base):
     """A user's feedback on a single assistant message."""
 
     __tablename__ = "feedbacks"
+    # M5 F5 partial — one feedback per (message, user) tuple. The
+    # `repo.create_feedback` upsert path catches the IntegrityError
+    # and converts it to an UPDATE on the existing row (allowing
+    # the user to correct their rating). Migration `0012` adds this
+    # constraint with `IF NOT EXISTS` so the model-level declaration
+    # stays in sync with the alembic chain.
+    __table_args__ = (
+        UniqueConstraint(
+            "message_id",
+            "user_id",
+            name="uq_feedbacks_message_user",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

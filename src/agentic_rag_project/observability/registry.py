@@ -90,6 +90,13 @@ class MetricsRegistry:
     # Drift detector (T4.4) — hot-path counter, incremented once per
     # detected drift event by `drift.detector.DriftDetector.run()`.
     drift_events_total: Counter
+    # Audit (M5) — one row per `AuditService.record()` call. `status`
+    # is derived from the action: `access_denied` / `guardrail_block`
+    # → "denied"; everything else → "success". The
+    # `HighAccessDeniedRate` alert in `infra/prometheus/alerts.yaml`
+    # subscribes to `action="access_denied"` rows to detect probing
+    # attacks (cross-tenant / cross-workspace attempts).
+    audit_log_total: Counter
 
     # ----- L1 — request-path histograms -----
     chat_latency_seconds: Histogram
@@ -184,6 +191,16 @@ def build_registry(registry: CollectorRegistry | None = None) -> MetricsRegistry
             "(T4.4 drift_detector), partitioned by kind / metric / "
             "severity / scope.",
             labelnames=("kind", "metric_name", "severity", "scope"),
+            registry=reg,
+        ),
+        audit_log_total=Counter(
+            "audit_log_total",
+            "Audit rows emitted via AuditService.record(), partitioned "
+            "by action + status. `status=denied` covers "
+            "access_denied / guardrail_block actions; everything else "
+            "is `success`. The Celery flush task does NOT increment "
+            "this counter (it drains the Redis buffer, not record()).",
+            labelnames=("action", "status"),
             registry=reg,
         ),
         # ----- L1 histograms -----

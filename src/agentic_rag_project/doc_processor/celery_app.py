@@ -60,6 +60,13 @@ def make_celery_app() -> Celery:
                 "task": "agentic_rag_project.drift.detect_drift",
                 "schedule": 900.0,  # 15 min
             },
+            # M4.3.1 — flush the Redis audit buffer to PG every 5 s.
+            # Celery beat's minimum is 1 s; 5 s is the chosen balance
+            # between freshness and Redis round-trips (DESIGN §4.4).
+            "audit-flush-buffer-5s": {
+                "task": "agentic_rag_project.audit.flush_audit_buffer",
+                "schedule": 5.0,
+            },
         },
     )
     return app
@@ -71,6 +78,14 @@ celery_app = make_celery_app()
 # Import tasks so `@celery_app.task` decorators register on import.
 def _register_tasks() -> None:
     from agentic_rag_project.doc_processor import tasks as _tasks  # noqa: F401
+
+    # M4.3.1 — audit buffer flusher. Owns its own registration
+    # because it lives outside `doc_processor.tasks` (architectural
+    # boundary: `audit` is a top-level module, not a doc-processor
+    # sub-module).
+    from agentic_rag_project.audit import tasks as _audit_tasks  # noqa: F401
+
+    _audit_tasks.make_flush_audit_buffer_task()
 
 
 _register_tasks()

@@ -35,18 +35,29 @@ _qdrant_cache: dict[int, QdrantClient] = {}
 
 
 def build_qdrant_client(settings: Settings) -> QdrantClient:
-    """Construct a QdrantClient from the given settings (no caching)."""
+    """Construct a QdrantClient from the given settings (no caching).
+
+    Passes `https=False` explicitly. The qdrant-client 1.x heuristic
+    auto-promotes the URL to `https://` whenever an api_key is present,
+    which silently breaks plain-HTTP dev Qdrants (port 6333, no TLS) —
+    the first request fails with `SSL: WRONG_VERSION_NUMBER`. Pinning
+    `https=False` keeps the URL scheme under the operator's control:
+    deploy behind TLS and set this to `True` or a QDRANT_URL when the
+    cluster actually terminates HTTPS.
+    """
     kwargs: dict[str, object] = {
         "host": settings.qdrant_host,
         "port": settings.qdrant_port,
         "timeout": 30,
+        "https": False,
     }
     if settings.qdrant_api_key and settings.qdrant_api_key != "__FROM_SECRET__":
         kwargs["api_key"] = settings.qdrant_api_key
     logger.info(
-        "connecting to qdrant at %s:%d",
+        "connecting to qdrant at %s:%d (https=%s)",
         settings.qdrant_host,
         settings.qdrant_port,
+        kwargs["https"],
     )
     return QdrantClient(**kwargs)
 

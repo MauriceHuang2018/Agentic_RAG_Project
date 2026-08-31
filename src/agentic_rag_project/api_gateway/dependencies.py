@@ -31,6 +31,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+# Local module access (no cycle); see `get_settings_cached` below.
+from agentic_rag_project.config import get_settings
+
 from agentic_rag_project.api_gateway.jwt import TokenError, decode_access_token
 from agentic_rag_project.db.models import Permission, Role, User, UserRole, Workspace
 from agentic_rag_project.db.session import get_db
@@ -252,3 +255,109 @@ def require_permission(permission_key: str):
         )
 
     return _checker
+
+
+def resolve_target_workspace(
+    ctx: UserContext,
+    workspace_id: str,
+) -> uuid.UUID:
+    """Resolve a request's `workspace_id` query param to a `uuid.UUID`.
+
+    Used by the M4.4 CSAT admin endpoints (and any future
+    workspace-scoped read API) to enforce that the caller is a
+    member of the requested workspace. Super-admins bypass the
+    membership check (they see every workspace).
+
+    The input is a **required** string — CSAT endpoints always
+    take `workspace_id` as a required `Query(...)`. For endpoints
+    where the caller may omit the parameter, the caller should
+    default to `next(iter(ctx.workspace_ids))` and pass that
+    string in instead (the `feedback_router.post_feedback` path
+    uses this pattern).
+
+    Raises:
+        HTTPException(400): `workspace_id` is not a valid UUID.
+        HTTPException(403): caller is not a super-admin and is
+            not a member of the requested workspace.
+
+    Why centralised: three CSAT endpoints need identical
+    validation logic; inlining it once per route duplicates
+    error shapes and risks drift if the rule changes.
+    """
+    try:
+        target = uuid.UUID(workspace_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid_workspace_id: {workspace_id!r}",
+        ) from exc
+    if ctx.is_super_admin:
+        return target
+    if target not in ctx.workspace_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="not_a_member_of_workspace",
+        )
+    return target
+
+
+# ---------------------------------------------------------------------------
+# M4.3 — governance dependencies (audit service + query guardrail)
+# ---------------------------------------------------------------------------
+
+
+def get_redis_dependency():
+    """Return the lifespan-cached `redis.Redis` client.
+
+    Reuses `retrieval_direct.redis_client.get_redis_client()` which
+    caches by `id(settings)` (dict-keyed, not lru_cache — see
+    `lifespan_settings_hash_bug` closed 2026-08-25).
+    """
+    from agentic_rag_project.retrieval_direct.redis_client import (
+        get_redis_client,
+    )
+
+    return get_redis_client(get_settings())
+
+
+def get_session_factory():
+    """Return a callable that opens a fresh Session on each call."""
+    from agentic_rag_project.db.session import _session_factory
+
+    return _session_factory()
+
+
+def get_audit_service():
+    """FastAPI dependency that produces a request-scoped `AuditService`.
+
+    Reuses the cached Redis client + the process-wide session factory
+    so we don't open a new connection per call. Also passes the
+    Prometheus metrics singleton so `record()` can bump
+    `audit_log_total{action, status}` for the `HighAccessDeniedRate`
+    alert (M5 close-out, 2026-08-27).
+    """
+    from agentic_rag_project.audit import AuditService
+    from agentic_rag_project.observability.registry import get_metrics
+
+    return AuditService(
+        redis_client=get_redis_dependency(),
+        session_factory=get_session_factory(),
+        metrics=get_metrics(),
+    )
+
+
+def get_query_guardrail():
+    """FastAPI dependency that produces the singleton `QueryGuardrail`.
+
+    The guardrail is read-mostly after construction (its trie + regex
+    are immutable until admin updates the word list), so a single
+    module-level object is fine.
+    """
+    from agentic_rag_project.post_processor.filter import (
+        build_default_filter,
+    )
+    from agentic_rag_project.query_guardrail import QueryGuardrail
+
+    return QueryGuardrail(
+        sensitive_filter=build_default_filter(get_redis_dependency()),
+    )

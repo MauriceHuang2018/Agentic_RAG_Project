@@ -569,7 +569,15 @@ def test_refresh_eval_gauges_with_faithfulness_rows(
 def test_refresh_business_gauges_csat(
     metrics: MetricsRegistry, db_session
 ) -> None:
-    """Insert 3 likes + 1 dislike → csat = 0.75."""
+    """Insert 3 likes + 1 dislike → csat = 0.75.
+
+    M5 (F5 partial) added `UNIQUE(message_id, user_id)` to the
+    `feedbacks` table — the same user can only submit one feedback
+    per message. The CSAT gauge must therefore aggregate across
+    multiple users, not multiple submissions from one user. This
+    test seeds 4 distinct user_ids to exercise the 3:1 likes:dislikes
+    ratio that drives the 0.75 CSAT value.
+    """
     from agentic_rag_project.db.models import (
         Conversation,
         Message,
@@ -578,27 +586,35 @@ def test_refresh_business_gauges_csat(
     )
 
     ws_id = _seed_feedback_basics(db_session)
-    user = User(id=uuid.uuid4(), username="u", email="u@e.com", password_hash="x")
-    ws = Workspace(id=ws_id, name="w", owner_id=user.id)
-    db_session.add_all([user, ws])
+    # 4 distinct users so each feedback row satisfies the new
+    # `uq_feedbacks_message_user` constraint. They all share the
+    # same workspace and message so the CSAT gauge computes a single
+    # per-workspace ratio of likes / total.
+    users = [
+        User(id=uuid.uuid4(), username=f"u{i}", email=f"u{i}@e.com", password_hash="x")
+        for i in range(4)
+    ]
+    ws = Workspace(id=ws_id, name="w", owner_id=users[0].id)
+    db_session.add_all([*users, ws])
     db_session.flush()
     repo = FeedbackRepository(db_session)
-    conv = Conversation(workspace_id=ws_id, user_id=user.id, title="t")
+    conv = Conversation(workspace_id=ws_id, user_id=users[0].id, title="t")
     db_session.add(conv)
     db_session.flush()
     msg = Message(conversation_id=conv.id, role="assistant", content="x")
     db_session.add(msg)
     db_session.flush()
-    for _ in range(3):
+    # 3 likes from users 0/1/2, 1 dislike from user 3.
+    for u in users[:3]:
         repo.create_feedback(
             message_id=msg.id,
-            user_id=user.id,
+            user_id=u.id,
             workspace_id=ws_id,
             rating=FeedbackRating.LIKE.value,
         )
     repo.create_feedback(
         message_id=msg.id,
-        user_id=user.id,
+        user_id=users[3].id,
         workspace_id=ws_id,
         rating=FeedbackRating.DISLIKE.value,
     )

@@ -89,7 +89,10 @@ def _build_chat_service() -> ChatService | None:
         llm_classifier=LLMClassifier(),
         keyword_classifier=KeywordClassifier(),
     )
-    agent_runner = AgentRunner(searcher=searcher)
+    # AgentRunner expects `searcher.two_stage_search(...)` per agent_core/runner.py:75.
+    # Pass `two_stage` (TwoStageSearcher) instead of `searcher` (HybridSearcher), which
+    # lacks that method. Surfaced 2026-08-25 during M3 Live E2E (see docs/m3_agentic_rag_intent/).
+    agent_runner = AgentRunner(searcher=two_stage)
     long_context = LongContextFallback()
     memory = ConversationMemory(redis_client=history_redis)
     sensitive_filter = SensitiveWordFilter(redis_client=redis_client)

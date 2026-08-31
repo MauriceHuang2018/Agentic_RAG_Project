@@ -5,6 +5,9 @@ DESIGN 4.2 / TASK T3 assembly: this is the HTTP shell around
 this module only:
   * Parses the request (Pydantic does that for us via `Body`).
   * Resolves auth + workspace (via existing dependencies).
+  * Runs the M4.3 query guardrail (R13 — first line after
+    workspace resolution; every LLM-bound input MUST pass through
+    `QueryGuardrail.check()`).
   * Maps service errors → HTTP errors.
   * Commits the SQLAlchemy session.
 
@@ -25,8 +28,11 @@ from sqlalchemy.orm import Session
 
 from agentic_rag_project.api_gateway.dependencies import (
     UserContext,
+    get_audit_service,
     get_current_user,
+    get_query_guardrail,
 )
+from agentic_rag_project.audit import AuditEvent, AuditService
 from agentic_rag_project.chat import (
     ChatQueryRequest,
     ChatQueryResponse,
@@ -42,6 +48,7 @@ from agentic_rag_project.observability.chat_metrics import (
     record_chat_request,
 )
 from agentic_rag_project.observability.registry import get_metrics
+from agentic_rag_project.query_guardrail import QueryGuardrail
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +93,40 @@ def post_chat_query(
     ctx: Annotated[UserContext, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db)],
     service: Annotated[ChatService, Depends(_get_chat_service)],
+    guardrail: Annotated[QueryGuardrail, Depends(get_query_guardrail)],
+    audit_service: Annotated[AuditService, Depends(get_audit_service)],
 ) -> ChatQueryResponse:
-    """Run one chat turn end-to-end (route → retrieve → answer → persist)."""
+    """Run one chat turn end-to-end (route → retrieve → answer → persist).
+
+    R13 — `QueryGuardrail.check()` runs as the first thing after
+    workspace resolution. A blocked query records a
+    `guardrail_block` audit event and returns 403; a clean query
+    flows through to `ChatService.handle`.
+    """
     workspace_id = _resolve_workspace_id(ctx, payload.workspace_id)
+    # R13 — chat_router 入口第一行 QueryGuardrail.check
+    guardrail_result = guardrail.check(payload.query or "")
+    if not guardrail_result.allowed:
+        audit_service.record(
+            AuditEvent(
+                user_id=str(ctx.user_id),
+                action="guardrail_block",
+                query=payload.query,
+                sanitized_query=guardrail_result.sanitized_query,
+                extra={
+                    "category": guardrail_result.category,
+                    "reason": guardrail_result.reason,
+                    "matched_text": guardrail_result.matched_text,
+                },
+            )
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"guardrail_block: {guardrail_result.category} "
+                f"({guardrail_result.reason})"
+            ),
+        )
     inc_chat_active_sessions(delta=1)
     router_class = "unknown"
     fallback_used = False

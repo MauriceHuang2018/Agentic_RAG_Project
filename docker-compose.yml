@@ -23,7 +23,13 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-rag_business}
-      POSTGRES_USER: ${POSTGRES_USER:-rag}
+      # M5 S1 (HIGH): `POSTGRES_USER` had a silent `:-rag` default
+      # — the password had `:?`, so the user was the only thing
+      # missing if `POSTGRES_PASSWORD` leaked. A misconfigured
+      # `POSTGRES_USER` (unset, default applied) would silently
+      # fall back to `rag` and probably still work because PG
+      # bootstrap creates that user. Hardening: drop the default.
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER required}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
@@ -33,7 +39,7 @@ services:
       # (POSTGRES_DB above only auto-creates the business DB).
       - ./infra/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag} -d ${POSTGRES_DB:-rag_business}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-rag_business}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -42,11 +48,22 @@ services:
     image: redis:7-alpine
     container_name: rag-redis
     restart: unless-stopped
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--appendonly", "yes"]
+    # M5 S5 (MEDIUM): password was on the CLI, visible via
+    # `docker inspect rag-redis`. Now loaded from a config file
+    # mounted read-only from the host. The `:?` guard below makes
+    # `docker compose config` fail-fast when REDIS_PASSWORD is
+    # unset, so a missing secret never silently starts the
+    # container with an empty password.
+    command: ["redis-server", "/etc/redis/redis.conf"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD required}
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
       - ./data/redis:/data
+      # Config is mount-read-only so an attacker who somehow
+      # breaks into the container can't overwrite the password.
+      - ./infra/redis/redis.conf:/etc/redis/redis.conf:ro
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
@@ -77,19 +94,24 @@ services:
     volumes:
       - ./infra/litellm_config.yaml:/app/config.yaml:ro
     environment:
-      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
-      Ali_API_BASE_URL: ${Ali_API_BASE_URL}
+      # M5 S2 (HIGH): these four were bare `${VAR}` — a missing
+      # env would have left an empty string in the container, which
+      # is the worst possible failure mode (litellm would silently
+      # use the upstream's "anonymous" quota, if any). `:?` makes
+      # `docker compose config` fail-fast instead.
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:?DASHSCOPE_API_KEY required}
+      Ali_API_BASE_URL: ${Ali_API_BASE_URL:?Ali_API_BASE_URL required}
       # Ali_EMBEDDING_BASE_URL: ${Ali_EMBEDDING_BASE_URL}
       # Workspace ID for DashScope embedding model (qwen3.7-text-embedding)
       # DASHSCOPE_WORKSPACE_ID: ${DASHSCOPE_WORKSPACE_ID}
-      LITELLM_MASTER_KEY: ${LITELLM_API_KEY}
+      LITELLM_MASTER_KEY: ${LITELLM_API_KEY:?LITELLM_API_KEY required}
       LITELLM_CONFIG_PATH: /app/config.yaml
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
       DATABASE_URL: "postgresql://rag:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_LITELLM_DB:-rag_litellm}"
       # Redis prompt cache (db 3, see litellm_config.yaml cache_params.db)
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD required}
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health/liveliness || exit 1"]
@@ -134,22 +156,33 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-rag_business}
-      POSTGRES_USER: ${POSTGRES_USER:-rag}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # M5 S1 (HIGH): api-gateway had `${POSTGRES_USER:-rag}` and
+      # `${POSTGRES_PASSWORD}` (bare) — same hardening as the
+      # postgres service. The pg_isready healthcheck at line ~42
+      # had to switch to `${POSTGRES_USER}` (no fallback) for
+      # consistency.
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # M5 S3 (HIGH): api-gateway's credential env vars were bare
+      # `${VAR}` — a misconfigured `.env` would have left the
+      # container connecting to redis / litellm / ragflow with an
+      # empty API key, which would fail closed at first call but
+      # leave the secret shape exposed in any debug dump. `:?`
+      # forces the operator to set them.
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD required}
       REDIS_DB: ${REDIS_DB:-0}
       REDIS_HISTORY_DB: ${REDIS_HISTORY_DB:-4}
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-chunks_v1}
       LITELLM_BASE_URL: http://litellm:4000
-      LITELLM_API_KEY: ${LITELLM_API_KEY}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:?LITELLM_API_KEY required}
       # DeepDoc Server (independent LitServe, port 9390) — only consulted by
       # the visual_router for scanned PDFs and standalone images.
       RAGFLOW_BASE_URL: http://ragflow-deepdoc:9390
-      RAGFLOW_API_KEY: ${RAGFLOW_API_KEY}
+      RAGFLOW_API_KEY: ${RAGFLOW_API_KEY:?RAGFLOW_API_KEY required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET required}
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
@@ -179,20 +212,21 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_HOST: postgres
-      POSTGRES_USER: ${POSTGRES_USER:-rag}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # M5 S3 (HIGH): celery-worker shares api-gateway's hardening.
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
       POSTGRES_DB: ${POSTGRES_DB:-rag_business}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD required}
       REDIS_DB: ${REDIS_DB:-0}
       REDIS_HISTORY_DB: ${REDIS_HISTORY_DB:-4}
       QDRANT_HOST: qdrant
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-chunks_v1}
       LITELLM_BASE_URL: http://litellm:4000
-      LITELLM_API_KEY: ${LITELLM_API_KEY}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:?LITELLM_API_KEY required}
       RAGFLOW_BASE_URL: http://ragflow-deepdoc:9390
-      RAGFLOW_API_KEY: ${RAGFLOW_API_KEY}
+      RAGFLOW_API_KEY: ${RAGFLOW_API_KEY:?RAGFLOW_API_KEY required}
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
     volumes:
@@ -218,12 +252,15 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_HOST: postgres
-      POSTGRES_USER: ${POSTGRES_USER:-rag}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # M5 S3 (HIGH): celery-beat doesn't talk to LLM providers,
+      # but it still needs DB + Redis credentials to run drift
+      # detection queries.
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
       POSTGRES_DB: ${POSTGRES_DB:-rag_business}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD required}
       REDIS_DB: ${REDIS_DB:-0}
       REDIS_HISTORY_DB: ${REDIS_HISTORY_DB:-4}
       CELERY_BROKER_URL: redis://redis:6379/1
@@ -274,7 +311,12 @@ services:
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # M5 S4 (LOW but real): grafana defaults to `admin/admin` —
+      # if the operator forgot to set GRAFANA_ADMIN_PASSWORD, the
+      # dashboard came up with the well-known default. Drop the
+      # `:-admin` fallback; the CI guard (T7) catches a deploy
+      # without this set.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD required}
     volumes:
       - ./data/grafana:/var/lib/grafana
       - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro

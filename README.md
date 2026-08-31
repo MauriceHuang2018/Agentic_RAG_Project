@@ -48,11 +48,11 @@ uv run pytest tests/
 uv run python -m agentic_rag_project
 ```
 
-## 技术栈（部分选型待 PRD 架构对齐任务确认）
+## 技术栈
 
 - **语言**：Python 3.11+
 - **包管理**：[uv](https://docs.astral.sh/uv/)（`pyproject.toml` + `uv.lock`）
-- **LLM**：DeepSeek-V3（主力）/ DeepSeek-R1（推理）—— 详见 `docs/PRD架构对齐/CONSENSUS_PRD架构对齐.md`
+- **LLM**：DeepSeek-V3（主力）/ DeepSeek-R1（推理）
 - **向量库**：Qdrant（推荐，待最终确认）
 - **Agent 框架**：LangGraph
 - **文档解析**：unstructured（简单格式）+ RAGFlow 微服务（扫描件/复杂）

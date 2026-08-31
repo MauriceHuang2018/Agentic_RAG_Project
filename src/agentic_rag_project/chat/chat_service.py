@@ -24,6 +24,7 @@ single HTTP 500.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass
@@ -671,12 +672,23 @@ def _coerce_page_no(raw: Any) -> int | None:
 
 
 def _agent_step_to_item(step: AgentStep) -> StepItem:
+    # Coerce non-string payloads to a JSON string so the API contract holds
+    # regardless of what individual nodes emit. `AgentStep.detail` is typed
+    # `dict[str, Any]` (state.py:52) but `StepItem.detail` is typed `str`
+    # (schema.py:34) — without this, `plan_node`'s dict payload
+    # (`{"sub_queries": [...], "rationale": ..., "fallback": bool}`) triggers
+    # a Pydantic ValidationError that the chat_router catch-all turns into
+    # HTTP 500 "internal_error". Surfaced 2026-08-26 during M3 Live E2E
+    # (see docs/m3_agentic_rag_intent/).
+    detail = step.detail
+    if not isinstance(detail, str):
+        detail = json.dumps(detail, ensure_ascii=False, default=str)
     return StepItem(
         step_id=step.step_id,
         iteration=step.iteration,
         node=step.node,
         action=step.action,
-        detail=step.detail,
+        detail=detail,
         duration_ms=int(step.duration_ms),
     )
 

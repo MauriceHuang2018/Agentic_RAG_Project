@@ -34,6 +34,7 @@ from agentic_rag_project.db.models import (
     UserRole,
     Workspace,
 )
+from agentic_rag_project.audit import AuditEvent, AuditService
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,14 @@ def assign_role(
     role_id: uuid.UUID,
     workspace_id: uuid.UUID,
     granted_by: uuid.UUID | None = None,
+    # M5 T5 — when the caller (an admin route) supplies an audit
+    # service, emit a `role_bind` row tied to the *actor* (the
+    # admin), not the *subject* (the user receiving the role).
+    # Without this, role-binding events would be missing from
+    # Page 8 audit logs. Default None keeps seed scripts and tests
+    # that call `assign_role()` directly working without
+    # constructing an `AuditService` they don't need.
+    audit_service: "AuditService | None" = None,
 ) -> UserRole:
     """Bind a user to a role within a workspace. Idempotent on duplicate.
 
@@ -103,6 +112,27 @@ def assign_role(
     session.add(binding)
     session.commit()
     session.refresh(binding)
+
+    # M5 T5 — emit the `role_bind` audit row AFTER the binding
+    # commits, so a failed commit doesn't leave an orphan audit
+    # row. The audit row goes through `audit_service` (Redis buffer
+    # + WORM trigger + DB CHECK) rather than the legacy
+    # `role_assign` literal which is preserved for historical
+    # back-compat but no longer used for new writes.
+    if audit_service is not None and granted_by is not None:
+        audit_service.record(
+            AuditEvent(
+                user_id=str(granted_by),
+                action="role_bind",
+                extra={
+                    "subject_user_id": str(user_id),
+                    "role_id": str(role_id),
+                    "role_name": role.name,
+                    "workspace_id": str(workspace_id),
+                },
+            )
+        )
+
     return binding
 
 

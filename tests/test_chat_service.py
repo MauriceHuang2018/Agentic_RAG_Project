@@ -671,3 +671,117 @@ def test_router_failure_falls_back_to_agent(fake_session: FakeSession) -> None:
     )
     assert resp.route == "agent"
     assert resp.answer == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Regression: _agent_step_to_item must coerce dict detail → str
+# ---------------------------------------------------------------------------
+# Background: `AgentStep.detail` is typed as `dict[str, Any]` (state.py:52) but
+# `StepItem.detail` is typed as `str` (schema.py:34). `plan_node` writes a dict
+# payload like `{"sub_queries": [...], "rationale": ..., "fallback": bool}`
+# (nodes.py:192-196). When the agent path executes at all, that dict reaches
+# `_agent_step_to_item` and previously caused a Pydantic ValidationError that
+# the chat_router catch-all turned into HTTP 500 "internal_error" — observed
+# during M3 Live E2E 2026-08-26 on every complex query. The serialization
+# boundary must coerce any non-str detail (dict / list / number) to a JSON
+# string so the API contract holds regardless of what individual nodes emit.
+
+
+def test_agent_step_to_item_coerces_dict_detail_to_json_string() -> None:
+    """A plan_node-style dict detail must serialise as JSON, not raise."""
+    from agentic_rag_project.chat.chat_service import _agent_step_to_item
+    from agentic_rag_project.chat.schema import StepItem
+
+    step = AgentStep(
+        iteration=0,
+        node="plan",
+        action="plan fallback — using original query as single sub-query",
+        detail={
+            "sub_queries": ["compare A with B"],
+            "rationale": "",
+            "fallback": True,
+        },
+        duration_ms=42,
+    )
+    item = _agent_step_to_item(step)
+    assert isinstance(item, StepItem)
+    assert isinstance(item.detail, str)
+    # Round-trip: JSON payload must contain the original keys.
+    import json
+
+    parsed = json.loads(item.detail)
+    assert parsed == {
+        "sub_queries": ["compare A with B"],
+        "rationale": "",
+        "fallback": True,
+    }
+
+
+def test_agent_step_to_item_passes_through_string_detail() -> None:
+    """When a node already emits a string detail, it is forwarded unchanged."""
+    from agentic_rag_project.chat.chat_service import _agent_step_to_item
+
+    step = AgentStep(
+        iteration=0,
+        node="retrieve",
+        action="ok",
+        detail="parents=2, chunks=5",
+        duration_ms=10,
+    )
+    item = _agent_step_to_item(step)
+    assert item.detail == "parents=2, chunks=5"
+
+
+def test_agent_path_succeeds_when_plan_emits_dict_detail(
+    fake_session: FakeSession,
+) -> None:
+    """End-to-end: agent path with dict-typed plan detail must not 500."""
+    plan_step = AgentStep(
+        iteration=0,
+        node="plan",
+        action="plan produced 2 sub-queries",
+        detail={
+            "sub_queries": ["compare A with B", "summarise findings"],
+            "rationale": "split for clarity",
+            "fallback": False,
+        },
+        duration_ms=20,
+    )
+    retrieve_step = AgentStep(
+        iteration=1,
+        node="retrieve",
+        action="ok",
+        detail="parents=2",
+        duration_ms=30,
+    )
+    agent_result = AgentResult(
+        answer="combined answer",
+        citations=[],
+        steps=[plan_step, retrieve_step],
+        iterations=2,
+    )
+    svc = _make_service(
+        fake_session=fake_session,
+        router_decision=RouteDecision(
+            route="agent", confidence=0.9, reason="complex", source="keyword"
+        ),
+        agent_result=agent_result,
+    )
+    resp = svc.handle(
+        session=fake_session,
+        request=ChatQueryRequest(query="compare A with B"),
+        user_id=uuid.uuid4(),
+        workspace_id=uuid.uuid4(),
+    )
+    assert resp.route == "agent"
+    assert resp.answer == "combined answer"
+    assert len(resp.steps) == 2
+    # First step's detail is the dict-shaped plan payload, serialised as JSON.
+    import json
+
+    parsed_detail = json.loads(resp.steps[0].detail)
+    assert parsed_detail["fallback"] is False
+    assert parsed_detail["sub_queries"] == [
+        "compare A with B",
+        "summarise findings",
+    ]

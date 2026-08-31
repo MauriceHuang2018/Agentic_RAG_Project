@@ -429,6 +429,7 @@ WATCHED_METRICS = {
     "open_tickets_by_status",
     "agent_node_total",
     "drift_events_total",
+    "audit_log_total",
 }
 
 

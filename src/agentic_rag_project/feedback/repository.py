@@ -82,9 +82,18 @@ class FeedbackRepository:
         name_zh: str,
         description: str | None = None,
         is_system: bool = False,
+        # `label` is the legacy NOT NULL column from migration 0001.
+        # The ORM still declares it for schema parity. Default to
+        # `name_zh` when callers don't pass one so new rows satisfy
+        # the constraint without each call site having to remember.
+        label: str | None = None,
     ) -> FeedbackCategory:
         row = FeedbackCategory(
-            key=key, name_zh=name_zh, description=description, is_system=is_system
+            key=key,
+            name_zh=name_zh,
+            description=description,
+            is_system=is_system,
+            label=label or name_zh,
         )
         self._session.add(row)
         try:
@@ -169,6 +178,28 @@ class FeedbackRepository:
         comment: str | None = None,
         ragas_scores: dict | None = None,
     ) -> Feedback:
+        """Insert a `Feedback` row, or update an existing one.
+
+        F5 partial — migration `0012` adds the UNIQUE constraint
+        `uq_feedbacks_message_user` on `(message_id, user_id)`.
+        Idempotent POST semantics: if the same user submits feedback
+        for the same message twice (e.g. double-tap on the UI, or
+        correcting their rating), the second submission updates the
+        existing row instead of creating a duplicate.
+
+        Implementation: we use the dialect-agnostic
+        INSERT-then-UPDATE-on-IntegrityError pattern rather than
+        `pg_insert(...).on_conflict_do_update(...)` so the same
+        code runs in production PG and in the SQLite test harness.
+        The UPDATE mutates only the user-controlled fields
+        (`rating`, `comment`, `ragas_scores`) — never the
+        `attribution_status` / `created_at` / `id` columns that the
+        service pipeline manages.
+
+        Returns the `Feedback` row in its post-write state. The
+        caller can read `row.id` regardless of whether the row was
+        inserted (new) or updated (existing).
+        """
         row = Feedback(
             message_id=message_id,
             user_id=user_id,
@@ -179,18 +210,61 @@ class FeedbackRepository:
             attribution_status=AttributionStatus.PENDING,
         )
         self._session.add(row)
-        self._session.flush()
+        try:
+            self._session.flush()
+        except IntegrityError as exc:
+            # Idempotency path: a row already exists for this
+            # (message_id, user_id) tuple. Roll back the failed
+            # INSERT and UPDATE the existing row in-place.
+            self._session.rollback()
+            existing = self._session.execute(
+                select(Feedback)
+                .where(Feedback.message_id == message_id)
+                .where(Feedback.user_id == user_id)
+            ).scalar_one_or_none()
+            if existing is None:
+                # The IntegrityError wasn't from the unique
+                # constraint we expected. Re-raise so the caller
+                # sees the original error and the transaction
+                # state stays in the rolled-back position.
+                raise
+            existing.rating = rating  # type: ignore[assignment]
+            existing.comment = comment
+            existing.ragas_scores = ragas_scores
+            # Reset attribution to PENDING so the new user input
+            # is re-evaluated. The service's attributor cascade
+            # overwrites this with SUCCEEDED / FAILED / SKIPPED.
+            existing.attribution_status = AttributionStatus.PENDING
+            self._session.flush()
+            return existing
         return row
 
     def get_feedback(self, feedback_id: uuid.UUID) -> Feedback | None:
         return self._session.get(Feedback, feedback_id)
 
     def get_feedback_by_message(
-        self, message_id: uuid.UUID
+        self,
+        message_id: uuid.UUID,
+        *,
+        # M5 F1 — workspace filter at the repo layer (single source of
+        # truth). Routes MUST pass `ctx.workspace_ids` so cross-tenant
+        # reads are impossible regardless of caller. An empty iterable
+        # is a programming error — the route layer short-circuits with
+        # 404 before calling this method in that case. We pass an
+        # explicit empty-tuple guard so a misuse returns 0 rows instead
+        # of leaking all workspaces.
+        workspace_ids: Sequence[uuid.UUID],
     ) -> Sequence[Feedback]:
+        if not workspace_ids:
+            # Defensive: refuse to return rows when caller provided no
+            # workspace scope. Without this branch, an empty list would
+            # SQL-render as `workspace_id IN ()` — PG rejects that as a
+            # syntax error and the request would 500 instead of 404.
+            return []
         stmt = (
             select(Feedback)
             .where(Feedback.message_id == message_id)
+            .where(Feedback.workspace_id.in_(list(workspace_ids)))
             .order_by(Feedback.created_at.desc())
         )
         return list(self._session.execute(stmt).scalars())

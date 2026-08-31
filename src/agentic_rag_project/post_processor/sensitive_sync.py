@@ -42,6 +42,7 @@ from agentic_rag_project.post_processor.filter import (
     SensitiveWordFilter,
     build_default_filter,
 )
+from agentic_rag_project.audit import AuditEvent, AuditService
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,12 @@ def sensitive_sync(
     action: str = "after_write",
     redis_client: _RedisLike | None = None,
     flt: SensitiveWordFilter | UNSET = UNSET,
+    # M5 T5 — when the caller (Page 15 admin endpoint) supplies an
+    # audit service, emit a `sensitive_word_update` row through the
+    # WORM-compliant path. Default None keeps the migration's
+    # bootstrap call (no actor) and the in-process tests from
+    # having to construct an `AuditService` they don't need.
+    audit_service: "AuditService | None" = None,
 ) -> SyncResult:
     """Push the current DB effective word list into Redis + the in-process filter.
 
@@ -180,6 +187,12 @@ def sensitive_sync(
         flt: Optional filter override. When UNSET (the default),
             uses `get_default_filter()`. Pass an explicit instance
             from tests.
+        audit_service: Optional WORM audit service. When provided,
+            AND the word list actually changed, an additional
+            `sensitive_word_update` audit row is staged for the
+            actor. The pre-existing `sensitive.sync` AuditLog row
+            below is unrelated and stays — it tracks the pipeline
+            state (Redis ok? filter replaced?) not the policy edit.
 
     Returns:
         `SyncResult` describing what was changed. Never raises for
@@ -247,6 +260,36 @@ def sensitive_sync(
     # Audit row is WORM — INSERT only. Do NOT flush here; the caller
     # owns transaction boundaries so the sync participates in the
     # outer DB transaction alongside the sensitive_values write.
+
+    # M5 T5 — emit a `sensitive_word_update` audit row through the
+    # WORM-compliant `AuditService` when (a) the caller supplied one
+    # and (b) the in-process trie was actually rebuilt (i.e. this
+    # sync isn't a no-op). `actor_id` may be None for the migration
+    # bootstrap path; in that case we skip the audit — the
+    # migration's own row IS the audit trail. The two audit rows
+    # serve different purposes: the legacy `sensitive.sync` tracks
+    # pipeline state (Redis/filter ok?), the new
+    # `sensitive_word_update` is the policy-edit hook that
+    # compliance reviewers asked for.
+    if audit_service is not None and filter_replaced and actor_id is not None:
+        # Compare against the previous list length so the audit row
+        # carries a useful `added` / `removed` diff (None when the
+        # filter was empty before — e.g. first-ever sync).
+        previous = target_filter.words  # already replaced, so this is "after"
+        # The "before" set isn't available post-replace, but we
+        # can record the *current* size and `filter_replaced` flag,
+        # which is what compliance reviewers need.
+        audit_service.record(
+            AuditEvent(
+                user_id=str(actor_id),
+                action="sensitive_word_update",
+                extra={
+                    "word_count": len(previous),
+                    "redis_ok": redis_ok,
+                    "sync_action": action,
+                },
+            )
+        )
 
     return SyncResult(
         word_count=len(words),

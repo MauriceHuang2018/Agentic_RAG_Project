@@ -314,3 +314,81 @@ groups:
             `{{ $labels.kind }}` / `{{ $labels.metric_name }}`. Sustained
             drift usually maps to a real quality regression — page on-call.
           runbook_url: "https://wiki.internal/runbooks/rag/rag/drift"
+
+  # M4.4 — CSAT sudden-drop alert. Fires when the rolling 1h CSAT
+  # drops >10% relative to the same window one hour earlier. CSAT
+  # is a per-workspace gauge (`csat_score{workspace_id=...}`),
+  # updated every 60s by the L3 collector. Note: the alert uses
+  # `avg_over_time` rather than bare `[1h]` so Prom has enough
+  # resolution; `for: 5m` debounces single-tick noise.
+  # When the previous window is 1.0 (perfect score), the division
+  # naturally evaluates to NaN and the alert does NOT fire — the
+  # series is dropped from the result vector.
+  - name: rag_csat
+    interval: 1m
+    rules:
+      - alert: CSATSuddenDrop
+        expr: |
+          (
+            avg_over_time(csat_score[1h] offset 1h)
+            - avg_over_time(csat_score[1h])
+          )
+            /
+          avg_over_time(csat_score[1h] offset 1h)
+            > 0.10
+        for: 5m
+        labels:
+          severity: critical
+          team: rag-platform
+          runbook: rag/csat-drop
+        annotations:
+          summary: "CSAT dropped >10% in 1h for workspace {{ $labels.workspace_id }}"
+          description: |
+            Workspace {{ $labels.workspace_id }} saw CSAT fall by more
+            than 10% comparing the last hour to the hour before. Check
+            recent feedback comments + drift alerts for the same
+            workspace.
+          runbook_url: "https://wiki.internal/runbooks/rag/csat-drop"
+
+  # M5 — Cross-tenant / cross-workspace probing-attack detector.
+  # `audit_log_total{action="access_denied"}` is incremented once per
+  # 401/403 emitted by the feedback / chat / rbac routes (F1+F2
+  # closure, 2026-08-27). A sustained rate > 10/s for 2 minutes
+  # usually means a stale-JWT scraper or a misconfigured service
+  # account is hammering forbidden endpoints. `for: 2m` debounces
+  # the legitimate "one user mistyped a URL twice" spike; severity
+  # is `warning` rather than `critical` because individual denials
+  # are expected (the auth layer is doing its job).
+  - name: security_audit
+    interval: 30s
+    rules:
+      - alert: HighAccessDeniedRate
+        expr: |
+          sum(rate(audit_log_total{action="access_denied"}[5m])) > 10
+        for: 2m
+        labels:
+          severity: warning
+          team: rag-platform
+          runbook: security/access-denied
+        annotations:
+          summary: "Access-denied rate above 10/s for 2+ minutes"
+          description: |
+            `audit_log_total{action="access_denied"}` is firing at
+            {{ $value | humanize }} denials/sec over the last 5 minutes
+            (sustained for 2+ minutes). This is almost always either
+            (a) a stale-JWT scraper probing workspace boundaries or
+            (b) a misconfigured service account. Inspect:
+
+              SELECT user_id, COUNT(*), MIN(ts), MAX(ts)
+              FROM audit_logs
+              WHERE action = 'access_denied'
+                AND ts > now() - interval '15 minutes'
+              GROUP BY user_id
+              ORDER BY COUNT(*) DESC
+              LIMIT 20;
+
+            If the top `user_id` is a known service account, rotate
+            its JWT and update its workspace bindings. If it's an
+            unknown UUID, treat as a probing attack and consider
+            blocking the source IP at the load balancer.
+          runbook_url: "https://wiki.internal/runbooks/rag/security/access-denied"

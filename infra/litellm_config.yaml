@@ -53,12 +53,12 @@ model_list:
 
 router_settings:
   num_retries: 3
-  timeout: 60
+  timeout: 120
   fallbacks:
     - qwen3.5-plus: [deepseek-v4-flash-0731, qwen3.7-plus]
     - deepseek-v4-flash-0731: [qwen3.5-plus, qwen3.7-plus]
-    - gpt-4o: [claude-sonnet-4-5, qwen3.5-plus]
-    - claude-sonnet-4-5: [gpt-4o, qwen3.5-plus]
+    # - gpt-4o: [claude-sonnet-4-5, qwen3.5-plus]
+    # - claude-sonnet-4-5: [gpt-4o, qwen3.5-plus]
 
 # Role mapping — single source of truth for which registered model plays
 # each role. `config.py` reads this block to populate the defaults of
@@ -66,8 +66,8 @@ router_settings:
 # `litellm_embedding_model`. Each value MUST match a `model_name` in
 # `model_list` above (enforced by tests/test_compose.py).
 roles:
-  primary: gpt-4o
-  long_context: claude-sonnet-4-5
+  primary: qwen3.7-plus
+  long_context: deepseek-v4-flash-0731
   embedding: text-embedding-v4
 
 general_settings:

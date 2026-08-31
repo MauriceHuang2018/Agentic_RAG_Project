@@ -16,6 +16,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from agentic_rag_project.api_gateway.admin_router import (
+    get_router as get_admin_router,
+)
 from agentic_rag_project.api_gateway.chat_router import (
     get_router as get_chat_router,
 )
@@ -39,6 +42,7 @@ gateway_router.include_router(auth_router, prefix="/api/v1")
 gateway_router.include_router(get_documents_router(), prefix="/api/v1")
 gateway_router.include_router(get_chat_router(), prefix="/api/v1")
 gateway_router.include_router(get_feedback_router(), prefix="/api/v1")
+gateway_router.include_router(get_admin_router(), prefix="/api/v1")
 
 # Prometheus scrape endpoint — mounted at ROOT, not under /api/v1,
 # per the standard Prometheus convention. The allowlist gates

@@ -70,6 +70,46 @@ from agentic_rag_project.feedback import (
 from agentic_rag_project.feedback.attributor import _safe_float
 from agentic_rag_project.feedback.models import _Base
 
+# M5 — F2 service-layer workspace check queries `messages.conversation
+# .workspace_id`. The legacy `_Base` only declares feedback tables, so
+# the engine fixture would fail with `no such table: messages` for any
+# test that calls `service.submit`. `_M5_MIN_TABLES` is a tiny
+# declarative that owns just `workspaces`, `conversations`, `messages`,
+# `users` (the minimum for the workspace check to run).
+from tests._m5_min_meta import (  # noqa: E402
+    Conversation as _M5Conv,
+    Message as _M5Msg,
+    Workspace as _M5Ws,
+    _M5_MIN_TABLES,
+)
+
+
+def _seed_message_for_f2(
+    session: Any,
+    *,
+    message_id: uuid.UUID,
+    workspace_id: uuid.UUID,
+) -> None:
+    """M5 F2 helper — seed a Message + Conversation + Workspace row
+    matching `(message_id, workspace_id)` so the service-layer
+    defense-in-depth check (`message.conversation.workspace_id ==
+    workspace_id`) passes in legacy tests.
+
+    The legacy tests were authored before F2 existed and call
+    `service.submit(message_id=uuid.uuid4(), workspace_id=uuid.uuid4())`
+    without creating the corresponding messages row. After F2 they
+    must pre-seed the row, otherwise `session.get(Message, mid)`
+    returns None and `submit()` raises LookupError → 404.
+
+    Use this at the top of any legacy test that exercises
+    `service.submit` or `POST /feedback`.
+    """
+    conv_id = uuid.uuid4()
+    session.add(_M5Ws(id=workspace_id))
+    session.add(_M5Conv(id=conv_id, workspace_id=workspace_id))
+    session.add(_M5Msg(id=message_id, conversation_id=conv_id, role="assistant", content=""))
+    session.flush()
+
 
 # ===========================================================================
 # test_categories.py
@@ -546,6 +586,12 @@ def engine():
         poolclass=StaticPool,
     )
     _Base.metadata.create_all(eng)
+    # M5 F2 — the service-layer workspace check queries the messages
+    # table to verify the message belongs to the claimed workspace.
+    # Create just the messages + conversations + workspaces tables
+    # (the minimum needed for that lookup) so the existing tests keep
+    # passing without bootstrapping the full DB.
+    _M5_MIN_TABLES.create_all(eng)
     yield eng
     eng.dispose()
 
@@ -630,20 +676,21 @@ class TestFeedbackRepository:
     def test_get_by_message(self, db_session) -> None:
         repo = FeedbackRepository(db_session)
         mid = uuid.uuid4()
+        ws1, ws2 = uuid.uuid4(), uuid.uuid4()
         repo.create_feedback(
             message_id=mid,
             user_id=uuid.uuid4(),
-            workspace_id=uuid.uuid4(),
+            workspace_id=ws1,
             rating="dislike",
         )
         repo.create_feedback(
             message_id=mid,
             user_id=uuid.uuid4(),
-            workspace_id=uuid.uuid4(),
+            workspace_id=ws2,
             rating="like",
         )
         db_session.commit()
-        items = repo.get_feedback_by_message(mid)
+        items = repo.get_feedback_by_message(mid, workspace_ids=[ws1, ws2])
         assert len(items) == 2
 
 
@@ -819,11 +866,15 @@ class TestFeedbackService:
     def test_submit_user_query_auto_closes_ticket(self, session_for_service) -> None:
         svc = FeedbackService(session=session_for_service)
         svc.seed_default_ticket_statuses()  # satisfy FK
+        # M5 F2 — seed the message row so the workspace check passes.
+        mid = uuid.uuid4()
+        ws = uuid.uuid4()
+        _seed_message_for_f2(session_for_service, message_id=mid, workspace_id=ws)
         session_for_service.commit()
         result = svc.submit(
-            message_id=uuid.uuid4(),
+            message_id=mid,
             user_id=uuid.uuid4(),
-            workspace_id=uuid.uuid4(),
+            workspace_id=ws,
             rating="dislike",
             comment="不明白问的是什么",
             query="hi",
@@ -839,11 +890,15 @@ class TestFeedbackService:
     def test_submit_retrieval_routes_to_pending(self, session_for_service) -> None:
         svc = FeedbackService(session=session_for_service)
         svc.seed_default_ticket_statuses()
+        # M5 F2 — seed the message row.
+        mid = uuid.uuid4()
+        ws = uuid.uuid4()
+        _seed_message_for_f2(session_for_service, message_id=mid, workspace_id=ws)
         session_for_service.commit()
         result = svc.submit(
-            message_id=uuid.uuid4(),
+            message_id=mid,
             user_id=uuid.uuid4(),
-            workspace_id=uuid.uuid4(),
+            workspace_id=ws,
             rating="dislike",
             query="公司年假政策",
             answer="回答内容",
@@ -857,11 +912,15 @@ class TestFeedbackService:
     def test_submit_skipped_when_no_query_or_answer(self, session_for_service) -> None:
         svc = FeedbackService(session=session_for_service)
         svc.seed_default_ticket_statuses()
+        # M5 F2 — seed the message row.
+        mid = uuid.uuid4()
+        ws = uuid.uuid4()
+        _seed_message_for_f2(session_for_service, message_id=mid, workspace_id=ws)
         session_for_service.commit()
         result = svc.submit(
-            message_id=uuid.uuid4(),
+            message_id=mid,
             user_id=uuid.uuid4(),
-            workspace_id=uuid.uuid4(),
+            workspace_id=ws,
             rating="like",
         )
         session_for_service.commit()
@@ -876,11 +935,15 @@ class TestFeedbackService:
 
         svc = FeedbackService(session=session_for_service, attributor=_Boom())
         svc.seed_default_ticket_statuses()
+        # M5 F2 — seed the message row.
+        mid = uuid.uuid4()
+        ws = uuid.uuid4()
+        _seed_message_for_f2(session_for_service, message_id=mid, workspace_id=ws)
         session_for_service.commit()
         result = svc.submit(
-            message_id=uuid.uuid4(),
+            message_id=mid,
             user_id=uuid.uuid4(),
-            workspace_id=uuid.uuid4(),
+            workspace_id=ws,
             rating="dislike",
             query="anything",
             answer="answer",
@@ -893,22 +956,25 @@ class TestFeedbackService:
     def test_get_feedback_by_message(self, session_for_service) -> None:
         svc = FeedbackService(session=session_for_service)
         svc.seed_default_ticket_statuses()
-        session_for_service.commit()
+        # M5 F2 — both rows share one message and one workspace.
         mid = uuid.uuid4()
+        ws = uuid.uuid4()
+        _seed_message_for_f2(session_for_service, message_id=mid, workspace_id=ws)
+        session_for_service.commit()
         svc.submit(
             message_id=mid,
             user_id=uuid.uuid4(),
-            workspace_id=uuid.uuid4(),
+            workspace_id=ws,
             rating="like",
         )
         svc.submit(
             message_id=mid,
             user_id=uuid.uuid4(),
-            workspace_id=uuid.uuid4(),
+            workspace_id=ws,
             rating="dislike",
         )
         session_for_service.commit()
-        rows = svc.get_feedback_by_message(mid)
+        rows = svc.get_feedback_by_message(mid, workspace_ids=[ws])
         assert len(rows) == 2
 
 
@@ -917,19 +983,35 @@ class TestFeedbackService:
 # ===========================================================================
 
 
-def _make_app(session_factory) -> FastAPI:
+def _make_app(session_factory) -> tuple[FastAPI, uuid.UUID]:
+    """Build a FastAPI app with `_make_app`-style overrides.
+
+    Returns `(app, ctx_ws_id)` — `ctx_ws_id` is the workspace_id the
+    fake user belongs to. Tests that POST `/feedback` (or hit any
+    service path that reads `message.conversation.workspace_id`)
+    need it to seed a matching `messages` row so the M5 F2 check
+    passes. Pre-M5 tests didn't need this because no workspace
+    check existed.
+    """
     app = FastAPI()
+    # Pin the workspace_id once per test so the F2 check can match
+    # the message row the test seeds. Without this, every call to
+    # `_fake_user` produced a fresh random UUID and the route's
+    # `session.get(Message, mid)` would never find a matching
+    # workspace, so every POST returned 404.
+    ctx_ws_id = uuid.uuid4()
+    ctx_user_id = uuid.uuid4()
 
     # Override auth.
     from agentic_rag_project.api_gateway.dependencies import get_current_user
 
     def _fake_user() -> UserContext:
         return UserContext(
-            user_id=uuid.uuid4(),
+            user_id=ctx_user_id,
             username="alice",
             is_super_admin=False,
             status="enable",
-            workspace_ids=frozenset({uuid.uuid4()}),
+            workspace_ids=frozenset({ctx_ws_id}),
             permissions=frozenset(),
         )
 
@@ -963,17 +1045,24 @@ def _make_app(session_factory) -> FastAPI:
     feedback_router.set_feedback_service_factory(_factory)
 
     app.include_router(feedback_router.router)
-    return app
+    return app, ctx_ws_id
 
 
 class TestFeedbackRouter:
     def test_submit_user_query(self, session_factory) -> None:
-        app = _make_app(session_factory)
+        app, ws_id = _make_app(session_factory)
+        # M5 F2 — seed the message row so the route + service layer
+        # workspace check passes.
+        mid = uuid.uuid4()
+        sess = session_factory()
+        _seed_message_for_f2(sess, message_id=mid, workspace_id=ws_id)
+        sess.commit()
+        sess.close()
         with TestClient(app) as client:
             resp = client.post(
                 "/feedback",
                 json={
-                    "message_id": str(uuid.uuid4()),
+                    "message_id": str(mid),
                     "rating": "dislike",
                     "comment": "doesn't make sense",
                     "query": "hi",
@@ -989,12 +1078,18 @@ class TestFeedbackRouter:
         assert data["ticket_status"] == "closed"
 
     def test_submit_retrieval(self, session_factory) -> None:
-        app = _make_app(session_factory)
+        app, ws_id = _make_app(session_factory)
+        # M5 F2 — seed the message row.
+        mid = uuid.uuid4()
+        sess = session_factory()
+        _seed_message_for_f2(sess, message_id=mid, workspace_id=ws_id)
+        sess.commit()
+        sess.close()
         with TestClient(app) as client:
             resp = client.post(
                 "/feedback",
                 json={
-                    "message_id": str(uuid.uuid4()),
+                    "message_id": str(mid),
                     "rating": "dislike",
                     "query": "公司年假政策",
                     "answer": "回答内容",
@@ -1006,7 +1101,7 @@ class TestFeedbackRouter:
         assert resp.json()["category_key"] == "retrieval"
 
     def test_invalid_rating_rejected(self, session_factory) -> None:
-        app = _make_app(session_factory)
+        app, _ = _make_app(session_factory)
         with TestClient(app) as client:
             resp = client.post(
                 "/feedback",
@@ -1019,7 +1114,7 @@ class TestFeedbackRouter:
         assert resp.status_code == 422
 
     def test_invalid_message_id(self, session_factory) -> None:
-        app = _make_app(session_factory)
+        app, _ = _make_app(session_factory)
         with TestClient(app) as client:
             resp = client.post(
                 "/feedback",
@@ -1032,7 +1127,7 @@ class TestFeedbackRouter:
         assert "message_id" in resp.json()["detail"]
 
     def test_list_categories(self, session_factory) -> None:
-        app = _make_app(session_factory)
+        app, _ = _make_app(session_factory)
         # Seed categories first.
         with TestClient(app) as client:
             resp = client.get("/feedback/categories")
@@ -1041,7 +1136,7 @@ class TestFeedbackRouter:
         assert isinstance(resp.json(), list)
 
     def test_create_category_requires_admin(self, session_factory) -> None:
-        app = _make_app(session_factory)
+        app, _ = _make_app(session_factory)
         with TestClient(app) as client:
             resp = client.post(
                 "/feedback/categories",
@@ -1050,7 +1145,7 @@ class TestFeedbackRouter:
         assert resp.status_code == 403
 
     def test_create_category_admin_success(self, session_factory) -> None:
-        app = _make_app(session_factory)
+        app, _ = _make_app(session_factory)
 
         from agentic_rag_project.api_gateway.dependencies import get_current_user
 
@@ -1076,7 +1171,7 @@ class TestFeedbackRouter:
         assert resp.json()["is_system"] is False
 
     def test_create_duplicate_category_409(self, session_factory) -> None:
-        app = _make_app(session_factory)
+        app, _ = _make_app(session_factory)
 
         from agentic_rag_project.api_gateway.dependencies import get_current_user
 
@@ -1097,8 +1192,14 @@ class TestFeedbackRouter:
         assert resp.status_code == 409
 
     def test_list_by_message(self, session_factory) -> None:
-        app = _make_app(session_factory)
+        app, ws_id = _make_app(session_factory)
+        # M5 F2 — seed the message row so the route + service layer
+        # workspace check passes.
         mid = str(uuid.uuid4())
+        sess = session_factory()
+        _seed_message_for_f2(sess, message_id=uuid.UUID(mid), workspace_id=ws_id)
+        sess.commit()
+        sess.close()
         with TestClient(app) as client:
             client.post(
                 "/feedback",
@@ -1114,7 +1215,7 @@ class TestFeedbackRouter:
         assert len(body["items"]) == 1
 
     def test_tags_admin_required(self, session_factory) -> None:
-        app = _make_app(session_factory)
+        app, _ = _make_app(session_factory)
         with TestClient(app) as client:
             resp = client.post(
                 "/feedback/tags",
@@ -1123,7 +1224,7 @@ class TestFeedbackRouter:
         assert resp.status_code == 403
 
     def test_tags_list(self, session_factory) -> None:
-        app = _make_app(session_factory)
+        app, _ = _make_app(session_factory)
         with TestClient(app) as client:
             resp = client.get("/feedback/tags")
         assert resp.status_code == 200
@@ -1136,7 +1237,7 @@ class TestFeedbackRouter:
             FeedbackService(session=s).seed_default_ticket_statuses()
             s.commit()
 
-        app = _make_app(session_factory)
+        app, _ = _make_app(session_factory)
         with TestClient(app) as client:
             resp = client.get("/feedback/ticket-statuses")
         assert resp.status_code == 200
@@ -1146,7 +1247,7 @@ class TestFeedbackRouter:
         assert keys == SYSTEM_TICKET_STATUS_KEYS
 
     def test_create_ticket_status_requires_admin(self, session_factory) -> None:
-        app = _make_app(session_factory)
+        app, _ = _make_app(session_factory)
         with TestClient(app) as client:
             resp = client.post(
                 "/feedback/ticket-statuses",
@@ -1155,7 +1256,7 @@ class TestFeedbackRouter:
         assert resp.status_code == 403
 
     def test_create_ticket_status_admin_success(self, session_factory) -> None:
-        app = _make_app(session_factory)
+        app, _ = _make_app(session_factory)
 
         from agentic_rag_project.api_gateway.dependencies import get_current_user
 
@@ -1189,7 +1290,7 @@ class TestFeedbackRouter:
         assert body["display_order"] == 80
 
     def test_create_duplicate_ticket_status_409(self, session_factory) -> None:
-        app = _make_app(session_factory)
+        app, _ = _make_app(session_factory)
 
         from agentic_rag_project.api_gateway.dependencies import get_current_user
 
