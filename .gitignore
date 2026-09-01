@@ -6,6 +6,10 @@ dist/
 wheels/
 *.egg-info
 
+# Node / frontend (M6 src/web/)
+node_modules/
+*.gen.ts
+
 # Virtual environments
 .venv
 
