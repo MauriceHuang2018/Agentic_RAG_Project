@@ -1,0 +1,63 @@
+// en-US locale messages. Mirror keys of zh-CN; values translated.
+
+export default {
+  app: {
+    title: 'DocGPT · Agentic RAG',
+  },
+  nav: {
+    chat: 'Chat',
+    admin: 'Admin',
+    profile: 'Profile',
+    logout: 'Sign out',
+  },
+  login: {
+    username: 'Username',
+    password: 'Password',
+    submit: 'Sign in',
+    failed: 'Sign-in failed. Please check your username and password.',
+    disabled: 'Account is disabled. Please contact an administrator.',
+  },
+  chat: {
+    placeholder: 'Ask a question…',
+    send: 'Send',
+    stop: 'Stop',
+    feedbackLike: 'Helpful',
+    feedbackDislike: 'Not helpful',
+    citation: 'Citations',
+    emptyHistory: 'No conversations yet',
+    newChat: 'New chat',
+    guardrail: {
+      sensitive_word: 'Sensitive content detected and logged. Please revise.',
+      prompt_injection: 'Privileged-instruction attempt detected and logged.',
+      pii: 'PII detected — masked or rejected.',
+      out_of_scope: 'Out of scope (knowledge base only).',
+    },
+  },
+  feedback: {
+    title: 'Submit feedback',
+    scoreUp: '👍 Helpful',
+    scoreDown: '👎 Not helpful',
+    commentPlaceholder: 'Tell us how to improve…',
+    reasonTag: 'Reason tag',
+    category: 'Category',
+    submit: 'Submit',
+    cancel: 'Cancel',
+    commentRequired: 'Please describe the issue to help us improve.',
+  },
+  common: {
+    loading: 'Loading…',
+    empty: 'No data',
+    confirm: 'Confirm',
+    cancel: 'Cancel',
+    save: 'Save',
+    delete: 'Delete',
+    edit: 'Edit',
+  },
+  errors: {
+    network: 'Network error. Please try again.',
+    unauthorized: 'Session expired. Please sign in again.',
+    forbidden: 'Permission denied.',
+    notFound: 'Not found.',
+    internal: 'Internal server error.',
+  },
+};

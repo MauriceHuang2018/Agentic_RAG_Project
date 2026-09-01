@@ -1,0 +1,44 @@
+{
+  "name": "agentic-rag-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "M6 frontend SPA for Agentic RAG project (src/web/)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview --port 5173",
+    "type-check": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "gen:openapi": "bash scripts/gen-openapi-ts.sh",
+    "gen:perms": "bash scripts/gen-perm-keys-sync.sh",
+    "check:perms": "bash scripts/check-route-perms.sh"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "dayjs": "^1.11.13",
+    "echarts": "^5.5.1",
+    "element-plus": "^2.8.6",
+    "pinia": "^2.2.6",
+    "vue": "^3.5.13",
+    "vue-echarts": "^7.0.3",
+    "vue-i18n": "^9.14.2",
+    "vue-router": "^4.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@vitejs/plugin-vue": "^5.1.4",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^25.0.1",
+    "openapi-typescript": "^7.4.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "vitest": "^2.1.5",
+    "vue-tsc": "^2.1.10"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}
