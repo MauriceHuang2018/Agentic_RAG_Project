@@ -1,0 +1,273 @@
+<!--
+  Page 2 · 智能问答 (Chat.vue)
+  Top-level view: workspace selector + conversation sidebar + message stream
+  + input. Delegates rendering to MessageBubble / ChatInput / CitationDrawer
+  / ConversationList. Composes useChatStream for the streaming loop and
+  useFeedbackSubmit for the feedback modal.
+-->
+<template>
+  <div class="chat-page">
+    <header class="chat-header">
+      <div class="chat-header-left">
+        <h1 class="chat-title">{{ t('nav.chat') }}</h1>
+        <el-select
+          v-model="activeWorkspace"
+          size="small"
+          style="width: 200px"
+          @change="onWorkspaceChange"
+        >
+          <el-option
+            v-for="ws in workspaceStore.visibleWorkspaces"
+            :key="ws.id"
+            :label="ws.name"
+            :value="ws.id"
+          />
+        </el-select>
+      </div>
+      <div class="chat-header-right">
+        <span class="chat-user">{{ auth.username }}</span>
+        <el-button text @click="onLogout">{{ t('nav.logout') }}</el-button>
+      </div>
+    </header>
+
+    <div class="chat-body">
+      <aside class="chat-sidebar">
+        <ConversationList
+          :conversations="conversations"
+          :active-id="activeConversationId"
+          @new-chat="onNewChat"
+          @select="onSelectConversation"
+        />
+      </aside>
+
+      <main class="chat-main">
+        <el-scrollbar ref="scrollRef" class="chat-messages">
+          <div class="chat-messages-inner">
+            <MessageBubble
+              v-for="m in chatMessages"
+              :key="m.id"
+              :role="m.role"
+              :content="m.content"
+              :streaming="m.streaming ?? false"
+              :timestamp="m.timestamp"
+              :citations="m.citations"
+              :message-id="m.role === 'assistant' && !m.streaming ? m.id : undefined"
+              :rating="ratings[m.id] ?? null"
+              @open-citations="openCitations(m.citations)"
+              @feedback="(r) => openFeedback(m, r)"
+            />
+          </div>
+        </el-scrollbar>
+
+        <ChatInput :disabled="isStreaming" @submit="onSubmitQuery" />
+      </main>
+    </div>
+
+    <CitationDrawer
+      v-model:visible="drawerVisible"
+      :citations="drawerCitations"
+    />
+
+    <FeedbackModal
+      v-model:visible="feedbackVisible"
+      :message="feedbackTarget"
+      :initial-rating="feedbackRating"
+      @submitted="onFeedbackSubmitted"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { onMounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import { ElMessage } from 'element-plus';
+import { useI18n } from 'vue-i18n';
+import { useAuthStore } from '@/stores/auth';
+import { useWorkspaceStore } from '@/stores/workspace';
+import { useChatStream, type ChatMessage } from '@/composables/useChatStream';
+import { isGuardrailError } from '@/api/errors';
+import MessageBubble from '@/components/chat/MessageBubble.vue';
+import ChatInput from '@/components/chat/ChatInput.vue';
+import CitationDrawer from '@/components/chat/CitationDrawer.vue';
+import ConversationList, {
+  type ConversationItem,
+} from '@/components/chat/ConversationList.vue';
+import FeedbackModal from '@/components/chat/FeedbackModal.vue';
+import type { CitationItem } from '@/api/endpoints/chat';
+import type { FeedbackRating } from '@/api/endpoints/feedback';
+
+const { t } = useI18n();
+const auth = useAuthStore();
+const workspaceStore = useWorkspaceStore();
+const router = useRouter();
+
+const chat = useChatStream();
+const { isStreaming, messages: chatMessages } = chat;
+const activeWorkspace = ref<string | null>(workspaceStore.activeWorkspaceId);
+
+// ─── Conversation sidebar (local-only, since /conversations endpoint missing) ──
+const conversations = ref<ConversationItem[]>([]);
+const activeConversationId = ref<string | null>(null);
+const ratings = ref<Record<string, FeedbackRating>>({});
+
+// ─── Citation drawer ────────────────────────────────────────────────
+const drawerVisible = ref(false);
+const drawerCitations = ref<CitationItem[]>([]);
+
+function openCitations(citations: CitationItem[]): void {
+  drawerCitations.value = citations;
+  drawerVisible.value = true;
+}
+
+// ─── Feedback modal ────────────────────────────────────────────────
+const feedbackVisible = ref(false);
+const feedbackTarget = ref<ChatMessage | null>(null);
+const feedbackRating = ref<FeedbackRating | null>(null);
+
+function openFeedback(msg: ChatMessage, rating: FeedbackRating): void {
+  feedbackTarget.value = msg;
+  feedbackRating.value = rating;
+  ratings.value[msg.id] = rating;
+  feedbackVisible.value = true;
+}
+
+function onFeedbackSubmitted(): void {
+  ElMessage.success(t('feedback.submit') + ' ✓');
+}
+
+// ─── Chat input ─────────────────────────────────────────────────────
+async function onSubmitQuery(query: string): Promise<void> {
+  try {
+    const reply = await chat.sendQuery(query, {
+      workspaceId: activeWorkspace.value,
+    });
+    if (reply && activeConversationId.value === null) {
+      activeConversationId.value = reply.response?.conversationId ?? null;
+      upsertConversationFromReply(query, reply);
+    } else if (reply) {
+      upsertConversationFromReply(query, reply);
+    }
+  } catch (err: unknown) {
+    const ne = err as { message?: string };
+    if (isGuardrailError(err)) {
+      ElMessage.warning(ne.message ?? 'guardrail_block');
+    } else {
+      ElMessage.error(ne.message ?? 'Chat failed');
+    }
+  }
+}
+
+function upsertConversationFromReply(query: string, reply: ChatMessage): void {
+  const convId = reply.response?.conversationId ?? activeConversationId.value ?? `local-${Date.now()}`;
+  const existing = conversations.value.find((c) => c.id === convId);
+  const title = query.slice(0, 30);
+  if (existing) {
+    existing.lastActivity = reply.timestamp;
+    existing.messageCount += 2;
+  } else {
+    conversations.value.unshift({
+      id: convId,
+      title,
+      lastActivity: reply.timestamp,
+      messageCount: 2,
+    });
+  }
+  activeConversationId.value = convId;
+}
+
+function onNewChat(): void {
+  chat.clear();
+  activeConversationId.value = null;
+  feedbackTarget.value = null;
+  feedbackRating.value = null;
+}
+
+function onSelectConversation(id: string): void {
+  activeConversationId.value = id;
+}
+
+async function onWorkspaceChange(next: string | null): Promise<void> {
+  workspaceStore.setActive(next);
+  chat.clear();
+  ElMessage.info(`workspace → ${next}`);
+}
+
+async function onLogout(): Promise<void> {
+  await auth.logout();
+  workspaceStore.clear();
+  await router.replace('/login');
+}
+
+// ─── Lifecycle ─────────────────────────────────────────────────────
+onMounted(() => {
+  if (!workspaceStore.activeWorkspaceId) workspaceStore.ensureFallback();
+  activeWorkspace.value = workspaceStore.activeWorkspaceId;
+});
+
+// Auto-scroll to bottom on new messages.
+const scrollRef = ref();
+watch(
+  () => chatMessages.length,
+  async () => {
+    await new Promise((r) => setTimeout(r, 50));
+    scrollRef.value?.scrollTo?.({ bottom: 0 });
+  },
+);
+
+</script>
+
+<style scoped>
+.chat-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #fff;
+}
+.chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 24px;
+  border-bottom: 1px solid #ebeef5;
+  background: #fafbfc;
+}
+.chat-header-left,
+.chat-header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.chat-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+.chat-user {
+  font-size: 14px;
+  color: #606266;
+}
+.chat-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.chat-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+}
+.chat-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.chat-messages {
+  flex: 1;
+  padding: 16px 24px;
+}
+.chat-messages-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+</style>

@@ -7,21 +7,23 @@
 // immediately.
 
 import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { createPinia, setActivePinia } from 'pinia';
+import { setActivePinia, createPinia } from 'pinia';
 import { useAuthStore } from '@/stores/auth';
 
-const loginResponse = {
-  access_token: 'test-jwt',
-  token_type: 'bearer' as const,
-  user: {
-    id: 'user-uuid-1',
-    username: 'alice',
-    is_super_admin: true,
-    status: 'enable' as const,
+// Hoisted mock data so vi.mock factory can reference it before module init.
+const { loginResponse, logoutResponse } = vi.hoisted(() => ({
+  loginResponse: {
+    access_token: 'test-jwt',
+    token_type: 'bearer' as const,
+    user: {
+      id: 'user-uuid-1',
+      username: 'alice',
+      is_super_admin: true,
+      status: 'enable' as const,
+    },
   },
-};
-
-const logoutResponse = { ok: true as const };
+  logoutResponse: { ok: true as const },
+}));
 
 vi.mock('@/api/endpoints/auth', () => ({
   login: vi.fn().mockResolvedValue({

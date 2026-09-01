@@ -1,0 +1,5 @@
+# Approved build scripts (pnpm 11+ syntax; supersedes legacy package.json `pnpm` field).
+# esbuild is required by vitest's transpiler; vue-demi is needed by Element Plus deps.
+allowBuilds:
+  esbuild: true
+  vue-demi: true

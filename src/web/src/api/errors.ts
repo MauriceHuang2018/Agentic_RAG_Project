@@ -15,7 +15,7 @@ export function toToastText(err: NormalizedError): string {
 }
 
 /** Predicate for guardrail 403 (frontend toast branch). */
-export function isGuardrailError(err: unknown): err is NormalizedError {
+export function isGuardrailError(err: unknown): boolean {
   return Boolean(
     err &&
       typeof err === 'object' &&

@@ -4,7 +4,7 @@
 //                   ↳ 401 invalid_credentials, 403 user_disabled
 //   POST /auth/logout → 200 {ok: true}  (server is stateless; client wipes state)
 
-import { httpClient } from './client';
+import { httpClient } from '../client';
 import type { AxiosError } from 'axios';
 
 export interface LoginRequest {

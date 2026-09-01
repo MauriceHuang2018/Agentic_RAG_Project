@@ -46,4 +46,4 @@ export interface SubmitFeedbackResponse {
   reasoning: string | null;
 }
 
-export { httpClient as _httpClient } from './client';
+export { httpClient as _httpClient } from '../client';
