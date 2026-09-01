@@ -31,7 +31,14 @@ FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH=/app/.venv/bin:$PATH
+    PATH=/app/.venv/bin:$PATH \
+    # Source lives at /app/src (line 42 COPY) but isn't installed into
+    # the venv (builder uses `uv sync --no-install-project`). Without
+    # this, `python -m agentic_rag_project` fails with
+    # "No module named agentic_rag_project" — the symptom is the
+    # rag-api container crash-looping on every restart. Fixed
+    # 2026-09-01.
+    PYTHONPATH=/app/src
 
 WORKDIR /app
 
