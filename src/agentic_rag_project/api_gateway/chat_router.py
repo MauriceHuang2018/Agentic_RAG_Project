@@ -40,6 +40,7 @@ from agentic_rag_project.chat import (
     ChatServiceError,
     EmptyQueryError,
 )
+from agentic_rag_project.db.models import Workspace
 from agentic_rag_project.db.session import get_db
 from agentic_rag_project.observability.chat_metrics import (
     inc_chat_active_sessions,
@@ -56,13 +57,25 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 def _resolve_workspace_id(
-    ctx: UserContext, override: str | None
+    ctx: UserContext,
+    override: str | None,
+    session: Session,
 ) -> uuid.UUID:
     """Pick the workspace for this request.
 
     `override` wins when the caller passes it explicitly (admin tooling,
     cross-workspace search). Otherwise the user's first workspace
     membership is used; if they're in none we 400.
+
+    FK fallback (added 2026-09-01 for M6 /chat smoke): when the caller
+    sends a `workspace_id` that does NOT exist in the `workspaces`
+    table, we 400 instead of letting it flow into `ChatService.handle`,
+    which would fail an `IntegrityError` on `INSERT Conversation`.
+    The placeholder UUID `00000000-...` from the frontend's
+    `workspace.ensureFallback()` (when `/me` does not return
+    `workspaces[]`) would otherwise produce the same 500. Returning
+    a clean 400 lets the UI surface "please pick a real workspace"
+    instead of an opaque server error.
     """
     if override:
         try:
@@ -74,6 +87,16 @@ def _resolve_workspace_id(
         if not ctx.is_super_admin and wid not in ctx.workspace_ids:
             raise HTTPException(
                 status_code=403, detail="not a member of requested workspace"
+            )
+        # FK fallback: reject override UUID that doesn't exist in the
+        # workspaces table. Runs AFTER the membership check so a
+        # super_admin who sends a real-but-unknown UUID still gets the
+        # same 400 (no special-case privilege for bogus ids).
+        existing = session.get(Workspace, wid)
+        if existing is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"workspace not found: {wid}",
             )
         return wid
     if not ctx.workspace_ids:
@@ -103,7 +126,7 @@ def post_chat_query(
     `guardrail_block` audit event and returns 403; a clean query
     flows through to `ChatService.handle`.
     """
-    workspace_id = _resolve_workspace_id(ctx, payload.workspace_id)
+    workspace_id = _resolve_workspace_id(ctx, payload.workspace_id, session)
     # R13 — chat_router 入口第一行 QueryGuardrail.check
     guardrail_result = guardrail.check(payload.query or "")
     if not guardrail_result.allowed:

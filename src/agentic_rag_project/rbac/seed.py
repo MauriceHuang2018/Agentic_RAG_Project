@@ -24,6 +24,14 @@ deployments call `seed_builtin_roles(session)` at startup; unit
 tests call it directly inside an in-memory SQLite fixture.
 `seed_demo_user(session)` is a companion that bootstraps a demo
 system_admin account for Page 15 smoke tests.
+
+`seed_demo_data(session)` (added 2026-09-01) bootstraps two demo
+workspaces (`acme-hq`, `acme-rd`) + two demo users (`alice`,
+`bob`) + their workspace bindings so /chat is verifiable end to
+end without manually wiring every row. Inspired by the
+`demo2/app.js` mock data (总公司 / 研发部). Passwords come from
+`Settings.demo_alice_password` / `Settings.demo_bob_password`
+(`.env` keys `DEMO_ALICE_PASSWORD` / `DEMO_BOB_PASSWORD`).
 """
 
 from __future__ import annotations
@@ -51,6 +59,20 @@ from agentic_rag_project.rbac.constants import (
     SYSTEM_WORKSPACE_ID,
     SYSTEM_WORKSPACE_NAME,
 )
+
+
+def _get_demo_settings_passwords() -> tuple[str, str]:
+    """Read demo account passwords from Settings.
+
+    Imported lazily so tests that build a Settings fixture with
+    `.env` absent still get the documented defaults (`alice_pass` /
+    `bob_pass`). Reading directly via `get_settings()` would force
+    every test to either set env vars or accept an `.env` lookup.
+    """
+    from agentic_rag_project.config import get_settings
+
+    s = get_settings()
+    return s.demo_alice_password, s.demo_bob_password
 
 logger = logging.getLogger(__name__)
 
@@ -487,3 +509,281 @@ def seed_demo_user(session: Session) -> User | None:
         SYSTEM_WORKSPACE_ID,
     )
     return user
+
+
+# -----------------------------------------------------------------------------
+# Demo workspace + user data (M6 — Page 2 chat smoke)
+#
+# Inspired by `demo2/app.js` mock data (Acme Corp / 总公司 / 研发部)
+# but anchored to the backend ORM (`User` / `Workspace` / `UserRole`).
+# Idempotent: every entity is keyed by a stable uuid5 UUID so a second
+# seed pass is a no-op. Owner users are disabled placeholders — they
+# exist only to satisfy `workspaces.owner_id` NOT NULL FK, same pattern
+# as `__system_owner__` (see `rbac.constants`).
+# -----------------------------------------------------------------------------
+
+
+# uuid5 UUIDs (stable forever — same dodge used by `__system__` to keep
+# SQLite's UUID type impl happy). DO NOT hand-edit; if any of these
+# change, every UserRole binding pointing at them becomes orphan.
+DEMO_ACME_HQ_ID: uuid.UUID = uuid.uuid5(
+    uuid.NAMESPACE_DNS, "demo-workspace.acme-hq.rag.local"
+)
+DEMO_ACME_HQ_OWNER_ID: uuid.UUID = uuid.uuid5(
+    uuid.NAMESPACE_DNS, "demo-owner.acme-hq.rag.local"
+)
+DEMO_ACME_HQ_OWNER_USERNAME: str = "__demo_acme_hq_owner__"
+DEMO_ACME_HQ_OWNER_EMAIL: str = "__demo_acme_hq_owner@rag.local__"
+DEMO_ACME_HQ_NAME: str = "Acme Corp · 总公司"  # 总公司
+
+DEMO_ACME_RD_ID: uuid.UUID = uuid.uuid5(
+    uuid.NAMESPACE_DNS, "demo-workspace.acme-rd.rag.local"
+)
+DEMO_ACME_RD_OWNER_ID: uuid.UUID = uuid.uuid5(
+    uuid.NAMESPACE_DNS, "demo-owner.acme-rd.rag.local"
+)
+DEMO_ACME_RD_OWNER_USERNAME: str = "__demo_acme_rd_owner__"
+DEMO_ACME_RD_OWNER_EMAIL: str = "__demo_acme_rd_owner@rag.local__"
+DEMO_ACME_RD_NAME: str = "Acme Corp · 研发部"  # 研发部
+
+DEMO_ALICE_USERNAME: str = "alice"
+DEMO_ALICE_EMAIL: str = "alice@example.local"
+DEMO_BOB_USERNAME: str = "bob"
+DEMO_BOB_EMAIL: str = "bob@example.local"
+
+
+def _ensure_demo_workspace_owner(
+    session: Session,
+    *,
+    user_id: uuid.UUID,
+    username: str,
+    email: str,
+) -> User:
+    """Create a disabled placeholder owner for a demo workspace.
+
+    Mirrors `__system_owner__`: `status='disable'` refuses login so
+    the placeholder hash can't be misused if it leaks. The owner
+    owns exactly one workspace and holds no permissions.
+    """
+    owner = session.get(User, user_id)
+    if owner is not None:
+        return owner
+    owner = User(
+        id=user_id,
+        username=username,
+        email=email,
+        password_hash="!locked:placeholder",
+        status="disable",
+        is_super_admin=False,
+    )
+    session.add(owner)
+    session.flush()
+    logger.info("seeded placeholder owner %s", username)
+    return owner
+
+
+def _ensure_demo_workspace(
+    session: Session,
+    *,
+    workspace_id: uuid.UUID,
+    name: str,
+    owner_id: uuid.UUID,
+) -> Workspace:
+    """Create a demo workspace if missing (idempotent by uuid5 id)."""
+    ws = session.get(Workspace, workspace_id)
+    if ws is not None:
+        return ws
+    ws = Workspace(
+        id=workspace_id,
+        name=name,
+        owner_id=owner_id,
+        status="enable",
+        isolation_level="logical",
+    )
+    session.add(ws)
+    session.flush()
+    logger.info("seeded demo workspace %s id=%s", name, workspace_id)
+    return ws
+
+
+def _ensure_demo_user(
+    session: Session,
+    *,
+    username: str,
+    email: str,
+    password: str,
+) -> User | None:
+    """Create a demo user if missing. Returns the row, or None on
+    pre-existing mismatch (caller logs and continues).
+    """
+    existing = session.execute(
+        select(User).where(User.username == username)
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    user = User(
+        username=username,
+        email=email,
+        password_hash=_hash_demo_password(password),
+        status="enable",
+        is_super_admin=False,
+        display_name=username.title(),
+    )
+    session.add(user)
+    session.flush()
+    logger.info("seeded demo user %s", username)
+    return user
+
+
+def _ensure_user_role(
+    session: Session,
+    *,
+    user_id: uuid.UUID,
+    role_id: uuid.UUID,
+    workspace_id: uuid.UUID,
+) -> None:
+    """Bind user -> role in workspace if missing.
+
+    The (user_id, role_id, workspace_id) composite is the primary key
+    on `user_roles`, so a duplicate insert raises IntegrityError. Idempotent
+    by lookup-then-insert.
+    """
+    existing = session.execute(
+        select(UserRole).where(
+            UserRole.user_id == user_id,
+            UserRole.role_id == role_id,
+            UserRole.workspace_id == workspace_id,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return
+    session.add(
+        UserRole(
+            user_id=user_id,
+            role_id=role_id,
+            workspace_id=workspace_id,
+        )
+    )
+    session.flush()
+
+
+def seed_demo_data(session: Session) -> dict[str, uuid.UUID]:
+    """Bootstrap two demo workspaces + two demo users + bindings.
+
+    Layout (mirrors `demo2/app.js` mock data so /chat demos match the
+    prototype's mental model):
+
+      workspaces
+        acme-hq (总公司)   owner=__demo_acme_hq_owner__ (disabled)
+        acme-rd (研发部)   owner=__demo_acme_rd_owner__ (disabled)
+      users
+        alice (chat_user in acme-hq, chat_user in acme-rd)
+        bob   (kb_admin  in acme-hq)
+      placeholder owners (status=disable, no login)
+        __demo_acme_hq_owner__
+        __demo_acme_rd_owner__
+
+    All rows are keyed by stable uuid5 UUIDs so re-running this
+    function is a no-op. Demo passwords come from
+    `Settings.demo_alice_password` / `Settings.demo_bob_password`
+    (env keys `DEMO_ALICE_PASSWORD` / `DEMO_BOB_PASSWORD`) — see
+    `.env` for the dev defaults.
+
+    Returns a dict mapping logical key -> row id for tests that need
+    to look rows up without re-querying.
+
+    Configured role catalog (must call `seed_builtin_roles` first):
+      - chat_user (alice in both workspaces)
+      - kb_admin  (bob in acme-hq)
+    """
+    # 0. Built-in roles must exist before binding — fail loud if missing.
+    required_roles = ("chat_user", "kb_admin")
+    found_roles: dict[str, Role] = {}
+    for name in required_roles:
+        role = session.execute(
+            select(Role).where(Role.name == name)
+        ).scalar_one_or_none()
+        if role is None:
+            logger.warning(
+                "role %s missing; call seed_builtin_roles() first", name
+            )
+            return {}
+        found_roles[name] = role
+
+    # 1. Placeholder owners (so workspaces.owner_id FK is satisfied).
+    _ensure_demo_workspace_owner(
+        session,
+        user_id=DEMO_ACME_HQ_OWNER_ID,
+        username=DEMO_ACME_HQ_OWNER_USERNAME,
+        email=DEMO_ACME_HQ_OWNER_EMAIL,
+    )
+    _ensure_demo_workspace_owner(
+        session,
+        user_id=DEMO_ACME_RD_OWNER_ID,
+        username=DEMO_ACME_RD_OWNER_USERNAME,
+        email=DEMO_ACME_RD_OWNER_EMAIL,
+    )
+
+    # 2. Workspaces.
+    hq = _ensure_demo_workspace(
+        session,
+        workspace_id=DEMO_ACME_HQ_ID,
+        name=DEMO_ACME_HQ_NAME,
+        owner_id=DEMO_ACME_HQ_OWNER_ID,
+    )
+    rd = _ensure_demo_workspace(
+        session,
+        workspace_id=DEMO_ACME_RD_ID,
+        name=DEMO_ACME_RD_NAME,
+        owner_id=DEMO_ACME_RD_OWNER_ID,
+    )
+
+    # 3. Users — passwords from settings.
+    alice_pw, bob_pw = _get_demo_settings_passwords()
+    alice = _ensure_demo_user(
+        session,
+        username=DEMO_ALICE_USERNAME,
+        email=DEMO_ALICE_EMAIL,
+        password=alice_pw,
+    )
+    bob = _ensure_demo_user(
+        session,
+        username=DEMO_BOB_USERNAME,
+        email=DEMO_BOB_EMAIL,
+        password=bob_pw,
+    )
+    if alice is None or bob is None:
+        session.rollback()
+        logger.warning("demo user creation returned None; aborting seed")
+        return {}
+
+    # 4. Bindings.
+    _ensure_user_role(
+        session,
+        user_id=alice.id,
+        role_id=found_roles["chat_user"].id,
+        workspace_id=hq.id,
+    )
+    _ensure_user_role(
+        session,
+        user_id=alice.id,
+        role_id=found_roles["chat_user"].id,
+        workspace_id=rd.id,
+    )
+    _ensure_user_role(
+        session,
+        user_id=bob.id,
+        role_id=found_roles["kb_admin"].id,
+        workspace_id=hq.id,
+    )
+
+    session.commit()
+    logger.info(
+        "demo data seeded: 2 workspaces + 2 users + 3 user-role bindings"
+    )
+    return {
+        "acme_hq_id": hq.id,
+        "acme_rd_id": rd.id,
+        "alice_id": alice.id,
+        "bob_id": bob.id,
+    }

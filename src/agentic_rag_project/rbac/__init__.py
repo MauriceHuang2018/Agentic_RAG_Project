@@ -12,6 +12,10 @@ M6 additions (DESIGN §4.6.2 / decision #9):
 - `list_active_workspace_members()` for Page 11's member table.
 - `seed_demo_user()` bootstraps a `system_admin` account for the
   Page 15 smoke tests.
+- `seed_demo_data()` (added 2026-09-01) bootstraps two demo
+  workspaces (`acme-hq` / `acme-rd`) + two demo users (`alice` /
+  `bob`) + their bindings so /chat is verifiable end to end.
+  Mirrors the `demo2/app.js` mock data structure.
 """
 
 from __future__ import annotations
@@ -36,11 +40,20 @@ from agentic_rag_project.rbac.roles import (
 )
 from agentic_rag_project.rbac.seed import (
     BUILTIN_ROLES,
+    DEMO_ACME_HQ_ID,
+    DEMO_ACME_HQ_NAME,
+    DEMO_ACME_HQ_OWNER_ID,
+    DEMO_ACME_RD_ID,
+    DEMO_ACME_RD_NAME,
+    DEMO_ACME_RD_OWNER_ID,
+    DEMO_ALICE_USERNAME,
+    DEMO_BOB_USERNAME,
     DEMO_PASSWORD,
     DEMO_USERNAME,
     PERMISSION_KEYS,
     builtin_role_names,
     seed_builtin_roles,
+    seed_demo_data,
     seed_demo_user,
 )
 from agentic_rag_project.rbac.status import (
@@ -57,6 +70,14 @@ __all__ = [
     "ALLOWED_STATUSES",
     "AssignmentError",
     "BUILTIN_ROLES",
+    "DEMO_ACME_HQ_ID",
+    "DEMO_ACME_HQ_NAME",
+    "DEMO_ACME_HQ_OWNER_ID",
+    "DEMO_ACME_RD_ID",
+    "DEMO_ACME_RD_NAME",
+    "DEMO_ACME_RD_OWNER_ID",
+    "DEMO_ALICE_USERNAME",
+    "DEMO_BOB_USERNAME",
     "DEMO_PASSWORD",
     "DEMO_USERNAME",
     "PERMISSION_KEYS",
@@ -76,6 +97,7 @@ __all__ = [
     "list_user_roles",
     "list_workspace_members",
     "seed_builtin_roles",
+    "seed_demo_data",
     "seed_demo_user",
     "set_user_status",
     "set_workspace_status",

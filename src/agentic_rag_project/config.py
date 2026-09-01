@@ -172,6 +172,13 @@ class Settings(BaseSettings):
     metrics_allowed_cidrs: str = Field(default="")
     metrics_bearer_token: str = Field(default="")
 
+    # Demo accounts (M6 — `rbac.seed._ensure_demo_data`).
+    # Passwords live in `.env` (`DEMO_ALICE_PASSWORD` / `DEMO_BOB_PASSWORD`)
+    # so source never carries a secret. The literal defaults here match
+    # the original dev seed values; rotate by editing `.env`.
+    demo_alice_password: str = Field(default="alice_pass")
+    demo_bob_password: str = Field(default="bob_pass")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

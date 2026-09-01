@@ -63,14 +63,50 @@ def fake_service():
     return _Service()
 
 
+class _FakeSession:
+    """Minimal SQLAlchemy session stand-in for chat_router FK lookup tests.
+
+    Only implements `get(Model, pk)` + `commit()` (no-op). `_resolve_workspace_id`
+    needs `get` to verify the workspace row exists. `known_workspaces`
+    maps `pk -> Model`; lookup returns None when missing (matches
+    SQLAlchemy semantics). Tests that override `user_ctx` should also
+    call `fake_session.add_known(ws_id)` so the FK check accepts the
+    override UUID.
+    """
+
+    def __init__(self, known_workspaces: dict[uuid.UUID, Any] | None = None):
+        self.known_workspaces: dict[uuid.UUID, Any] = known_workspaces or {}
+
+    def add_known(self, ws_id: uuid.UUID) -> None:
+        """Register a workspace id as existing (for tests that swap ctx)."""
+        self.known_workspaces[ws_id] = object()
+
+    def get(self, model: type, pk: Any) -> Any:
+        # `_resolve_workspace_id` only ever asks for Workspace by UUID.
+        return self.known_workspaces.get(pk)
+
+    def commit(self) -> None:
+        """No-op — the fake session never persists."""
+        return None
+
+
 @pytest.fixture
-def app(user_ctx: UserContext, fake_service):
+def fake_session(user_ctx: UserContext) -> _FakeSession:
+    """A session that knows about the user's workspace (so happy-path
+    override-lookup also finds the row)."""
+    member_ws = next(iter(user_ctx.workspace_ids))
+    return _FakeSession(known_workspaces={member_ws: object()})
+
+
+@pytest.fixture
+def app(user_ctx: UserContext, fake_service, fake_session):
     """A minimal FastAPI app exposing only the chat router with overrides."""
     app = FastAPI()
     app.include_router(chat_router.get_router(), prefix="/api/v1")
 
     # Override auth + DB.
     app.dependency_overrides[chat_router.get_current_user] = lambda: user_ctx
+    app.dependency_overrides[chat_router.get_db] = lambda: fake_session
 
     # We can rely on the chat_service_factory indirection instead of
     # overriding the FastAPI dep directly.
@@ -155,7 +191,7 @@ def test_query_returns_response(
 
 
 def test_query_uses_caller_supplied_workspace(
-    client: TestClient, fake_service
+    client: TestClient, fake_service, fake_session
 ) -> None:
     explicit_workspace = uuid.uuid4()
     user_ctx_local = UserContext(
@@ -170,6 +206,10 @@ def test_query_uses_caller_supplied_workspace(
     client.app.dependency_overrides[chat_router.get_current_user] = (
         lambda: user_ctx_local
     )
+    # FK fallback (added 2026-09-01): the override UUID must also be
+    # registered with the fake session so the route's workspace existence
+    # check accepts it.
+    fake_session.add_known(explicit_workspace)
 
     fake_service.next_response = _ok_response()
     resp = client.post(
@@ -306,3 +346,118 @@ def test_query_max_iterations_too_high(
         headers=_auth_header(user_ctx),
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# FK fallback (added 2026-09-01 for M6 /chat smoke)
+#
+# When the caller sends a `workspace_id` that is a syntactically valid
+# UUID but does NOT correspond to a row in `workspaces`, the route must
+# reject with 400 instead of letting `ChatService.handle` blow up with
+# an IntegrityError (which surfaced as a confusing 500 in the
+# M6 hand-test). Membership check fires FIRST (so 403 wins for an
+# authorized user sending a foreign UUID); the FK check catches the
+# "valid UUID, but no such row" case — typically the placeholder
+# `00000000-...` from the frontend's `workspace.ensureFallback()`.
+# ---------------------------------------------------------------------------
+
+
+def test_query_with_unknown_workspace_id_returns_400(
+    client: TestClient, user_ctx: UserContext
+) -> None:
+    """Super-admin (no membership restriction) sends a UUID that isn't
+    in the workspaces table → 400, not 500. Real-world trigger: the
+    frontend's placeholder UUID when `/me` doesn't return workspaces."""
+    other_workspace = uuid.uuid4()  # valid UUID, but no row exists
+
+    super_admin_ctx = UserContext(
+        user_id=user_ctx.user_id,
+        username=user_ctx.username,
+        is_super_admin=True,
+        status="enable",
+        workspace_ids=frozenset(),
+        permissions=user_ctx.permissions,
+    )
+    client.app.dependency_overrides[chat_router.get_current_user] = (
+        lambda: super_admin_ctx
+    )
+    # Override auth header too so token matches the new ctx.
+    resp = client.post(
+        "/api/v1/chat/query",
+        json={"query": "hi", "workspace_id": str(other_workspace)},
+        headers=_auth_header(super_admin_ctx),
+    )
+    assert resp.status_code == 400
+    assert "not found" in resp.json()["detail"]
+
+
+def test_query_with_placeholder_workspace_id_returns_400(
+    client: TestClient, user_ctx: UserContext
+) -> None:
+    """The exact M6 hand-test bug: super_admin + workspace_id =
+    '00000000-0000-0000-0000-000000000000' (frontend fallback) used
+    to produce 500 via IntegrityError on INSERT Conversation. Now 400."""
+    placeholder = uuid.UUID("00000000-0000-0000-0000-000000000000")
+
+    super_admin_ctx = UserContext(
+        user_id=user_ctx.user_id,
+        username=user_ctx.username,
+        is_super_admin=True,
+        status="enable",
+        workspace_ids=frozenset(),
+        permissions=user_ctx.permissions,
+    )
+    client.app.dependency_overrides[chat_router.get_current_user] = (
+        lambda: super_admin_ctx
+    )
+    resp = client.post(
+        "/api/v1/chat/query",
+        json={"query": "hi", "workspace_id": str(placeholder)},
+        headers=_auth_header(super_admin_ctx),
+    )
+    assert resp.status_code == 400
+    assert "not found" in resp.json()["detail"]
+
+
+def test_query_403_still_wins_over_400_for_unknown_workspace(
+    client: TestClient, user_ctx: UserContext
+) -> None:
+    """A non-super-admin sending a UUID that isn't a member AND
+    doesn't exist → 403 (membership check fires first). FK check
+    is a no-op for unauthorized workspaces."""
+    other_workspace = uuid.uuid4()
+    resp = client.post(
+        "/api/v1/chat/query",
+        json={"query": "hi", "workspace_id": str(other_workspace)},
+        headers=_auth_header(user_ctx),
+    )
+    assert resp.status_code == 403
+
+
+def test_query_with_known_override_workspace_id_returns_200(
+    client: TestClient, user_ctx: UserContext, fake_service, fake_session
+) -> None:
+    """Sanity: a caller-override UUID that EXISTS in the workspaces
+    table still flows through normally — the FK fallback is additive,
+    not breaking the happy path."""
+    explicit_workspace = uuid.uuid4()
+    user_ctx_local = UserContext(
+        user_id=user_ctx.user_id,
+        username=user_ctx.username,
+        is_super_admin=False,
+        status="enable",
+        workspace_ids=frozenset({explicit_workspace}),
+        permissions=user_ctx.permissions,
+    )
+    client.app.dependency_overrides[chat_router.get_current_user] = (
+        lambda: user_ctx_local
+    )
+    fake_session.add_known(explicit_workspace)
+
+    fake_service.next_response = _ok_response()
+    resp = client.post(
+        "/api/v1/chat/query",
+        json={"query": "hi", "workspace_id": str(explicit_workspace)},
+        headers=_auth_header(user_ctx_local),
+    )
+    assert resp.status_code == 200

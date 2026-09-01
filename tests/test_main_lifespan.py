@@ -207,6 +207,11 @@ def patch_lifespan_bootstrap(monkeypatch: pytest.MonkeyPatch):
     fake_session = _FakeSession()
     monkeypatch.setattr(main_mod, "SessionLocal", lambda: fake_session)
     monkeypatch.setattr(main_mod, "seed_builtin_roles", lambda session: None)
+    # M6 (2026-09-01): seed_demo_data was added to the lifespan
+    # alongside seed_builtin_roles. Stub it too so the lifespan tests
+    # don't need a real Postgres (the bootstrap-internals tests in
+    # `tests/test_demo_data_seed.py` cover the seed itself).
+    monkeypatch.setattr(main_mod, "seed_demo_data", lambda session: {})
     monkeypatch.setattr(main_mod, "ensure_all", lambda q, s: None)
     monkeypatch.setattr(main_mod, "FeedbackService", lambda session: _FakeFeedbackService())
     return {"session": fake_session}

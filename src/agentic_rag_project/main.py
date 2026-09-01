@@ -19,7 +19,7 @@ from agentic_rag_project.db.session import SessionLocal
 from agentic_rag_project.feedback.service import FeedbackService
 from agentic_rag_project.post_processor.filter import SensitiveWordFilter
 from agentic_rag_project.post_processor.mask import Masker
-from agentic_rag_project.rbac import seed_builtin_roles
+from agentic_rag_project.rbac import seed_builtin_roles, seed_demo_data
 from agentic_rag_project.retrieval_direct.long_context_fallback import (
     LongContextFallback,
 )
@@ -118,6 +118,10 @@ async def lifespan(_: FastAPI):
 
     Three idempotent bootstraps:
       - `seed_builtin_roles`: 5 built-in roles + permission keys (T5.2)
+      - `seed_demo_data`: 2 demo workspaces + alice/bob users + bindings
+        (M6 — Page 2 chat smoke). Inspired by `demo2/app.js` mock
+        data. Passwords come from `.env` (DEMO_ALICE_PASSWORD /
+        DEMO_BOB_PASSWORD). Idempotent by uuid5 UUID.
       - `ensure_all`: Qdrant `chunks_v1` collection + 8 payload indexes (T2.1)
       - `seed_default_categories` + `seed_default_ticket_statuses`
         (T4.2): make sure both feedback dictionaries are populated.
@@ -135,11 +139,12 @@ async def lifespan(_: FastAPI):
     session = SessionLocal()
     try:
         seed_builtin_roles(session)
+        seed_demo_data(session)
         svc = FeedbackService(session=session)
         svc.seed_default_categories()
         svc.seed_default_ticket_statuses()
         session.commit()
-        logger.info("rbac + feedback dictionaries seeded")
+        logger.info("rbac + feedback dictionaries + demo data seeded")
     finally:
         session.close()
 
