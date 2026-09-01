@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DocGPT · 企业级 Agentic RAG 智能问答</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-view="chat">
+  <!-- ===== Top Bar ===== -->
+  <header class="topbar" role="banner">
+    <div class="topbar__inner">
+      <div class="brand" aria-label="产品名称">
+        <div class="brand__mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h11l5 5v11a1 1 0 0 1-1 1H4Z" />
+            <path d="M15 4v5h5" />
+            <path d="M8 13h8M8 17h5" />
+          </svg>
+        </div>
+        <div class="brand__text">
+          <div class="brand__name">DocGPT</div>
+          <div class="brand__sub">企业级 Agentic RAG</div>
+        </div>
+      </div>
+
+      <div class="topbar__right">
+        <span class="status-pill" title="服务状态">
+          <span class="status-pill__dot" aria-hidden="true"></span>
+          <span>本地服务 · 在线</span>
+        </span>
+        <span class="topbar__meta" id="topbarMeta">Acme Corp · 总公司</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== Layout: Sidebar + Main ===== -->
+  <div class="layout">
+
+    <!-- ===== Sidebar (left) ===== -->
+    <aside class="sidebar" aria-label="导航">
+
+      <!-- Chat-mode sidebar content -->
+      <div class="sidebar__pane sidebar__pane--chat" data-pane="chat">
+        <!-- 工作空间切换器（v2.0：上移到左栏顶部） -->
+        <div class="workspace workspace--top" id="workspaceBox">
+          <button class="workspace__btn" id="workspaceBtn" type="button" aria-haspopup="listbox" aria-expanded="false">
+            <span class="workspace__label">当前工作空间</span>
+            <span class="workspace__value" id="workspaceValue">Acme Corp · 总公司</span>
+            <span class="workspace__caret" aria-hidden="true">▾</span>
+          </button>
+          <ul class="workspace__menu" id="workspaceMenu" role="listbox" hidden></ul>
+        </div>
+
+        <button class="btn btn--primary btn--block" id="btnNewChat" type="button">
+          <span class="btn__icon" aria-hidden="true">+</span>
+          <span>新建对话</span>
+        </button>
+
+        <!-- 历史搜索（v2.0 新增） -->
+        <div class="history-search">
+          <span class="history-search__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+          </span>
+          <input type="search" id="historySearch" class="history-search__input" placeholder="搜索历史对话..." aria-label="搜索历史对话" />
+        </div>
+
+        <div class="sidebar__group-label">历史会话</div>
+        <nav class="history" id="historyList" aria-label="历史会话列表"></nav>
+        <div class="history__footer" id="historyFooter" aria-live="polite"></div>
+      </div>
+
+      <!-- Admin-mode sidebar content -->
+      <div class="sidebar__pane sidebar__pane--admin is-hidden" data-pane="admin">
+        <button class="btn btn--ghost btn--block" id="btnBackToChat" type="button">
+          <span class="btn__icon" aria-hidden="true">←</span>
+          <span>返回聊天</span>
+        </button>
+
+        <nav class="submenu" id="adminSubmenu" aria-label="管理后台子菜单">
+          <!-- 监控 -->
+          <div class="submenu__group-label">监控</div>
+          <button class="submenu__item is-active" data-admin-tab="overview" type="button">
+            <span class="submenu__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7" rx="1" />
+                <rect x="14" y="3" width="7" height="7" rx="1" />
+                <rect x="3" y="14" width="7" height="7" rx="1" />
+                <rect x="14" y="14" width="7" height="7" rx="1" />
+              </svg>
+            </span>
+            <span>后台首页</span>
+          </button>
+          <button class="submenu__item" data-admin-tab="dashboard" type="button">
+            <span class="submenu__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 3v18h18" />
+                <path d="M7 14l4-4 3 3 5-6" />
+              </svg>
+            </span>
+            <span>评估看板</span>
+          </button>
+          <button class="submenu__item" data-admin-tab="audit" type="button">
+            <span class="submenu__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+                <path d="M14 2v6h6" />
+                <path d="M9 13h6M9 17h4" />
+              </svg>
+            </span>
+            <span>审计日志</span>
+          </button>
+          <button class="submenu__item" data-admin-tab="feedback" type="button">
+            <span class="submenu__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4l-5 1 1.4-4.7A8.4 8.4 0 1 1 21 11.5Z" />
+              </svg>
+            </span>
+            <span>反馈查看</span>
+          </button>
+
+          <!-- 管理 -->
+          <div class="submenu__group-label">管理</div>
+          <button class="submenu__item" data-admin-tab="documents" type="button">
+            <span class="submenu__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+                <path d="M14 2v6h6" />
+              </svg>
+            </span>
+            <span>文档管理</span>
+          </button>
+          <button class="submenu__item" data-admin-tab="users" type="button">
+            <span class="submenu__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+            </span>
+            <span>用户管理</span>
+          </button>
+          <button class="submenu__item" data-admin-tab="workspaces" type="button">
+            <span class="submenu__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="3" width="20" height="14" rx="2" />
+                <path d="M8 21h8M12 17v4" />
+              </svg>
+            </span>
+            <span>工作空间</span>
+          </button>
+
+          <!-- 设置 -->
+          <div class="submenu__group-label">设置</div>
+          <button class="submenu__item" data-admin-tab="feedback-config" type="button">
+            <span class="submenu__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z" />
+                <circle cx="7.5" cy="7.5" r="1.5" />
+              </svg>
+            </span>
+            <span>反馈配置</span>
+          </button>
+          <button class="submenu__item" data-admin-tab="rbac" type="button">
+            <span class="submenu__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3 4 6v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6Z" />
+                <path d="M9 12h6" />
+              </svg>
+            </span>
+            <span>角色管理</span>
+          </button>
+          <button class="submenu__item" data-admin-tab="sensitive-info" type="button">
+            <span class="submenu__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
+                <path d="m9 12 2 2 4-4" />
+              </svg>
+            </span>
+            <span>敏感信息</span>
+          </button>
+        </nav>
+      </div>
+
+      <!-- Bottom: user / workspace / entry -->
+      <div class="sidebar__bottom">
+        <div class="user-card" id="userCard">
+          <div class="avatar avatar--sm" aria-hidden="true">
+            <span id="userAvatarText">MC</span>
+          </div>
+          <div class="user-card__meta">
+            <div class="user-card__name" id="userName">陈敏</div>
+            <div class="user-card__role">
+              <span class="chip chip--muted" id="userRole">chat_user</span>
+            </div>
+          </div>
+        </div>
+
+        <button class="sidebar-link" id="btnEnterAdmin" type="button">
+          <span class="sidebar-link__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7" rx="1" />
+              <rect x="14" y="3" width="7" height="7" rx="1" />
+              <rect x="3" y="14" width="7" height="7" rx="1" />
+              <rect x="14" y="14" width="7" height="7" rx="1" />
+            </svg>
+          </span>
+          <span>管理后台</span>
+        </button>
+
+        <button class="sidebar-link is-hidden" id="btnLogout" type="button">
+          <span class="sidebar-link__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+          </span>
+          <span>退出登录</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ===== Main ===== -->
+    <main class="main" role="main">
+
+      <!-- ===== Chat View ===== -->
+      <section class="view view--chat" data-view="chat" aria-label="对话视图">
+        <div class="chat">
+          <header class="chat__header">
+            <div>
+              <div class="chat__title" id="chatTitle">新建对话</div>
+              <div class="chat__sub" id="chatSub">在本工作空间的知识库内提问。回答均附引用出处。</div>
+            </div>
+          </header>
+
+          <div class="chat__stream" id="messageStream" aria-live="polite"></div>
+
+          <div class="chat__composer">
+            <div class="composer">
+              <div class="composer__files" id="composerFiles" hidden></div>
+              <div class="composer__hint" id="composerHint">Enter 发送 · Shift + Enter 换行 · 提问含敏感词将被拦截</div>
+              <div class="composer__row">
+                <button class="composer__upload" id="btnUpload" type="button" aria-label="上传文件" title="上传文件作为临时附件">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m21.4 11-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" />
+                  </svg>
+                </button>
+                <input type="file" id="fileInput" hidden multiple />
+                <textarea
+                  id="composerInput"
+                  class="composer__input"
+                  rows="1"
+                  placeholder="向知识库提问，例如：年报中提到的退货政策是什么？"
+                  aria-label="提问输入框"
+                ></textarea>
+                <button class="btn btn--primary composer__send" id="btnSend" type="button">
+                  <span>发送</span>
+                  <span class="composer__send-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M5 12h14M13 5l7 7-7 7" />
+                    </svg>
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Admin View ===== -->
+      <section class="view view--admin is-hidden" data-view="admin" aria-label="管理后台视图">
+        <div class="admin">
+          <header class="admin__header">
+            <div>
+              <div class="admin__eyebrow">管理后台</div>
+              <div class="admin__title" id="adminTitle">文档管理</div>
+              <div class="admin__sub" id="adminSub">在工作空间内管理文档、查看反馈、监控评估指标与角色权限。</div>
+            </div>
+            <div class="admin__actions" id="adminActions"></div>
+          </header>
+
+          <!-- 演示模式 banner：v2.0 规范要求 Page 15 (敏感信息维护) 始终可见 -->
+          <div class="admin__demo-banner" id="adminDemoBanner" role="note">
+            <span class="admin__demo-banner-icon" aria-hidden="true">⚠</span>
+            <span class="admin__demo-banner-text">
+              <strong>演示模式</strong>· 当前看到的所有数据均为静态 mock，无后端鉴权；生产环境中 Page 15 敏感信息维护仅 <code>system_admin</code> 可见，Page 4-14 按 RBAC 权限点收敛
+            </span>
+            <button class="admin__demo-banner-close" id="adminDemoBannerClose" type="button" aria-label="关闭演示 banner">×</button>
+          </div>
+
+          <div class="admin__content" id="adminContent">
+            <!-- Populated by app.js based on selected tab -->
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Login View (v2.0 P1) ===== -->
+      <section class="view view--login is-hidden" data-view="login" aria-label="登录视图">
+        <div class="login">
+          <div class="login__inner" id="loginContent">
+            <!-- Populated by app.js renderLoginView() -->
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Profile View (v2.0 P14, route version) ===== -->
+      <section class="view view--profile is-hidden" data-view="profile" aria-label="个人中心">
+        <div class="profile">
+          <header class="profile__header">
+            <div>
+              <div class="profile__eyebrow">个人中心</div>
+              <div class="profile__title" id="profileRouteTitle">—</div>
+              <div class="profile__sub" id="profileRouteSub">基本信息 / 偏好 / API Token / 我的工作空间 / 操作日志</div>
+            </div>
+            <div class="profile__actions">
+              <button class="btn btn--ghost" id="btnBackFromProfile" type="button">返回对话</button>
+            </div>
+          </header>
+          <div class="profile__layout">
+            <nav class="profile__nav" id="profileRouteNav" aria-label="个人中心导航"></nav>
+            <div class="profile__body" id="profileRouteBody">
+              <!-- Populated by app.js renderProfileView() -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ===== Citation Drawer (right slide-in, v2.0) ===== -->
+    <aside class="cite-drawer" id="citeDrawer" aria-label="引用详情" hidden>
+      <header class="cite-drawer__head">
+        <div>
+          <div class="cite-drawer__eyebrow">引用详情</div>
+          <div class="cite-drawer__title" id="citeDrawerTitle">—</div>
+        </div>
+        <button class="icon-btn" id="citeDrawerClose" type="button" aria-label="关闭引用">×</button>
+      </header>
+      <div class="cite-drawer__body">
+        <div class="cite-drawer__meta" id="citeDrawerMeta"></div>
+        <div class="cite-drawer__section">
+          <div class="cite-drawer__section-label">命中片段</div>
+          <blockquote class="cite-drawer__snippet" id="citeDrawerSnippet"></blockquote>
+        </div>
+        <div class="cite-drawer__section">
+          <div class="cite-drawer__section-label">定位</div>
+          <ul class="cite-drawer__position" id="citeDrawerPosition"></ul>
+        </div>
+        <div class="cite-drawer__footer">
+          <button class="btn btn--ghost btn--sm" id="citeDrawerJump" type="button">
+            <span>跳转到原文</span>
+            <span aria-hidden="true">→</span>
+          </button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ===== Audit Drawer (Page 8, v2.0: WORM 表行抽屉) ===== -->
+  <aside class="cite-drawer audit-drawer" id="auditDrawer" aria-label="审计日志详情" hidden>
+    <header class="cite-drawer__head">
+      <div>
+        <div class="cite-drawer__eyebrow">审计日志 · 全 payload</div>
+        <div class="cite-drawer__title" id="auditDrawerId">—</div>
+      </div>
+      <button class="icon-btn" id="auditDrawerClose" type="button" aria-label="关闭审计抽屉">×</button>
+    </header>
+    <div class="cite-drawer__body">
+      <div class="cite-drawer__section">
+        <div class="cite-drawer__section-label">基本信息</div>
+        <dl class="audit-dl">
+          <dt>时间</dt><dd id="auditDrawerTs" class="mono">—</dd>
+          <dt>用户</dt><dd id="auditDrawerUser">—</dd>
+          <dt>动作</dt><dd id="auditDrawerAction">—</dd>
+          <dt>结果</dt><dd id="auditDrawerBlocked">—</dd>
+        </dl>
+      </div>
+      <div class="cite-drawer__section" id="auditDrawerQueryWrap">
+        <div class="cite-drawer__section-label">查询内容（完整）</div>
+        <blockquote class="cite-drawer__snippet" id="auditDrawerQuery" style="white-space: pre-wrap;"></blockquote>
+      </div>
+      <div class="cite-drawer__section">
+        <div class="cite-drawer__section-label">检索 / 模型 / 性能</div>
+        <dl class="audit-dl">
+          <dt>命中数</dt><dd id="auditDrawerRetrieved" class="mono">—</dd>
+          <dt>模型</dt><dd id="auditDrawerModel" class="mono">—</dd>
+          <dt>Tokens</dt><dd id="auditDrawerTokens" class="mono">—</dd>
+          <dt>耗时</dt><dd id="auditDrawerLatency" class="mono">—</dd>
+        </dl>
+      </div>
+      <div class="cite-drawer__section">
+        <div class="cite-drawer__section-label">完整 JSON payload</div>
+        <pre class="audit-drawer__json" id="auditDrawerExtra"></pre>
+      </div>
+      <div class="cite-drawer__footer">
+        <span class="muted" style="font-size: 11px;">WORM：不可编辑 · 不可删除</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===== Workspace Drawer (Page 12, v2.0: 卡片网格的配置抽屉) ===== -->
+  <aside class="cite-drawer ws-drawer" id="workspaceDrawer" aria-label="工作空间配置" hidden>
+    <header class="cite-drawer__head">
+      <div>
+        <div class="cite-drawer__eyebrow">工作空间 · 配置</div>
+        <div class="cite-drawer__title" id="workspaceDrawerId">—</div>
+        <div class="cite-drawer__subtitle muted" id="workspaceDrawerSub">—</div>
+      </div>
+      <button class="icon-btn" id="workspaceDrawerClose" type="button" aria-label="关闭工作空间配置">×</button>
+    </header>
+    <div class="cite-drawer__body">
+      <div class="cite-drawer__section">
+        <label class="ws-field__label" for="workspaceDrawerName">名称</label>
+        <input class="ws-field__input" id="workspaceDrawerName" type="text" maxlength="64" />
+
+        <label class="ws-field__label" for="workspaceDrawerIso">隔离级别</label>
+        <select class="ws-field__input" id="workspaceDrawerIso">
+          <option value="logical">logical（逻辑隔离，共享 Qdrant collection + PG schema）</option>
+          <option value="physical">physical（物理隔离，独立 Qdrant collection + PG schema）</option>
+        </select>
+
+        <label class="ws-field__label" for="workspaceDrawerStatus">状态</label>
+        <select class="ws-field__input" id="workspaceDrawerStatus">
+          <option value="enable">enable（启用，对在线用户开放）</option>
+          <option value="disable">disable（冻结，仅审计可查）</option>
+        </select>
+
+        <label class="ws-field__label" for="workspaceDrawerDesc">说明</label>
+        <textarea class="ws-field__input ws-field__textarea" id="workspaceDrawerDesc" rows="4" maxlength="240"></textarea>
+      </div>
+      <div class="cite-drawer__footer">
+        <button class="btn btn--ghost btn--sm" id="workspaceDrawerCancel" type="button">取消</button>
+        <button class="btn btn--primary btn--sm" id="workspaceDrawerSave" type="button">保存</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===== User Drawer (Page 11, v2.0: 用户管理 + 角色分配二级面板) ===== -->
+  <aside class="cite-drawer user-drawer" id="userDrawer" aria-label="用户管理" hidden>
+    <header class="cite-drawer__head">
+      <div>
+        <div class="cite-drawer__eyebrow">用户管理</div>
+        <div class="cite-drawer__title" id="userDrawerTitle">编辑用户</div>
+      </div>
+      <button class="icon-btn" id="userDrawerClose" type="button" aria-label="关闭用户抽屉">×</button>
+    </header>
+    <div class="cite-drawer__body">
+      <div class="cite-drawer__section">
+        <div class="cite-drawer__section-label">基本信息</div>
+        <label class="ws-field__label" for="userDrawerUsername">用户名</label>
+        <input class="ws-field__input" id="userDrawerUsername" type="text" maxlength="32" />
+
+        <label class="ws-field__label" for="userDrawerEmail">邮箱</label>
+        <input class="ws-field__input" id="userDrawerEmail" type="email" maxlength="128" />
+
+        <label class="ws-field__label" for="userDrawerInitPwd">初始密码（仅新建时使用）</label>
+        <input class="ws-field__input" id="userDrawerInitPwd" type="password" maxlength="64" />
+
+        <label class="ws-field__label" style="display:flex; align-items:center; gap:6px;">
+          <input id="userDrawerSuper" type="checkbox" />
+          <span>设为超级管理员（<code>is_super_admin=true</code> · 跳过所有 RBAC 检查）</span>
+        </label>
+      </div>
+
+      <div class="cite-drawer__section">
+        <div class="cite-drawer__section-label">角色分配（按 workspace 维度）</div>
+        <div id="userRolePanel"></div>
+      </div>
+
+      <div class="cite-drawer__footer">
+        <button class="btn btn--ghost btn--sm" id="userDrawerCancel" type="button">取消</button>
+        <button class="btn btn--primary btn--sm" id="userDrawerSave" type="button">保存</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===== Feedback Drawer (Page 13, v2.0: Tags / Categories 编辑抽屉) ===== -->
+  <aside class="cite-drawer fb-conf-drawer" id="feedbackDrawer" aria-label="反馈配置编辑" hidden>
+    <header class="cite-drawer__head">
+      <div>
+        <div class="cite-drawer__eyebrow">反馈配置 · <span id="feedbackDrawerKind">—</span></div>
+        <div class="cite-drawer__title" id="feedbackDrawerTitle">—</div>
+      </div>
+      <button class="icon-btn" id="feedbackDrawerClose" type="button" aria-label="关闭反馈配置">×</button>
+    </header>
+    <div class="cite-drawer__body">
+      <div class="cite-drawer__section">
+        <label class="ws-field__label" for="feedbackDrawerKey">key（不可重复 · 编辑时不可改）</label>
+        <input class="ws-field__input mono" id="feedbackDrawerKey" type="text" maxlength="64" />
+
+        <label class="ws-field__label" for="feedbackDrawerLabel">label（用户可见的中文名）</label>
+        <input class="ws-field__input" id="feedbackDrawerLabel" type="text" maxlength="64" />
+
+        <div id="feedbackDrawerPromptWrap">
+          <label class="ws-field__label" for="feedbackDrawerPrompt">auto_classify_prompt（保存后失效 Redis 缓存）</label>
+          <textarea class="ws-field__input ws-field__textarea" id="feedbackDrawerPrompt" rows="6" maxlength="500"></textarea>
+        </div>
+      </div>
+      <div class="cite-drawer__footer">
+        <button class="btn btn--ghost btn--sm" id="feedbackDrawerCancel" type="button">取消</button>
+        <button class="btn btn--primary btn--sm" id="feedbackDrawerSave" type="button">保存</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===== Profile Drawer (Page 14, v2.0: 5 vertical Tab 个人中心) ===== -->
+  <aside class="cite-drawer profile-drawer" id="profileDrawer" aria-label="个人中心" hidden>
+    <header class="cite-drawer__head">
+      <div>
+        <div class="cite-drawer__eyebrow">个人中心</div>
+        <div class="cite-drawer__title" id="profileDrawerTitle">—</div>
+      </div>
+      <button class="icon-btn" id="profileDrawerClose" type="button" aria-label="关闭个人中心">×</button>
+    </header>
+    <div class="profile-drawer__layout">
+      <nav class="vtab-bar profile-drawer__nav" id="profileNav">
+        <button class="vtab" data-profile-tab="basic" type="button">基本信息</button>
+        <button class="vtab" data-profile-tab="prefs" type="button">偏好</button>
+        <button class="vtab" data-profile-tab="tokens" type="button">API Token</button>
+        <button class="vtab" data-profile-tab="workspaces" type="button">我的工作空间</button>
+        <button class="vtab" data-profile-tab="audit" type="button">操作日志</button>
+      </nav>
+      <div class="profile-drawer__body" id="profileBody"></div>
+    </div>
+  </aside>
+
+  <!-- ===== Document ACL Drawer (Page 5, v2.0) ===== -->
+  <aside class="cite-drawer" id="docAclDrawer" aria-label="文档访问控制 ACL" hidden>
+    <header class="cite-drawer__head">
+      <button class="icon-btn" id="docAclDrawerClose" type="button" aria-label="关闭">×</button>
+      <div>
+        <div class="cite-drawer__eyebrow">访问控制 ACL</div>
+        <div class="cite-drawer__title" id="docAclDrawerTitle">—</div>
+        <div class="cite-drawer__subtitle muted" id="docAclDrawerId">—</div>
+        <div class="cite-drawer__subtitle muted" id="docAclDrawerDoc">—</div>
+      </div>
+    </header>
+    <div class="cite-drawer__body">
+      <div class="cite-drawer__section">
+        <div class="cite-drawer__section-label">已分配权限</div>
+        <div id="docAclList" class="acl-list"></div>
+      </div>
+      <div class="cite-drawer__section">
+        <div class="cite-drawer__section-label">新增 ACL 条目</div>
+        <div class="acl-add-form">
+          <div class="field">
+            <label class="field__label" for="docAclPrincipalKind">主体</label>
+            <select class="ws-field__input" id="docAclPrincipalKind" style="height:32px;">
+              <option value="user">用户</option>
+              <option value="workspace">工作空间</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="field__label" for="docAclPrincipal">主体名</label>
+            <input class="ws-field__input" id="docAclPrincipal" placeholder="输入用户或工作空间名" />
+          </div>
+          <div class="field">
+            <label class="field__label" for="docAclPerm">权限</label>
+            <select class="ws-field__input" id="docAclPerm" style="height:32px;">
+              <option value="doc:read">doc:read · 读取</option>
+              <option value="doc:write">doc:write · 写</option>
+              <option value="doc:admin">doc:admin · 完全控制</option>
+            </select>
+          </div>
+          <button class="btn btn--primary" id="docAclDrawerAdd" type="button" style="align-self:flex-start; height:32px;">添加 ACL 条目</button>
+        </div>
+        <p class="muted" style="font-size:11px; margin-top:var(--s-2);">
+          数据来源：<span class="mono">acls</span> 表（document_id + user_id 或 workspace_id + permission_key + granted_by）。admin 操作会写入 <span class="mono">audit_logs.action='role_bind'</span>。
+        </p>
+      </div>
+    </div>
+    <div class="cite-drawer__footer">
+      <button class="btn btn--ghost" id="docAclDrawerFooterClose" type="button">关闭</button>
+    </div>
+  </aside>
+
+  <!-- ===== Feedback Modal (Page 3, v2.0) ===== -->
+  <div class="fb-modal-backdrop" id="fbModal" hidden>
+    <div class="fb-modal" role="dialog" aria-labelledby="fbModalTitle" aria-modal="true">
+      <header class="fb-modal__head">
+        <div>
+          <div class="fb-modal__eyebrow">反馈这个回答</div>
+          <div class="fb-modal__title" id="fbModalTitle">请告诉我们哪里可以改进</div>
+        </div>
+        <button class="icon-btn" id="fbModalClose" type="button" aria-label="关闭">×</button>
+      </header>
+      <div class="fb-modal__body">
+        <div class="fb-rate" role="radiogroup" aria-label="评分">
+          <button class="fb-rate__btn" data-fb-rate="up" type="button" role="radio" aria-checked="false">
+            <span class="fb-rate__emoji" aria-hidden="true">👍</span>
+            <span>有用</span>
+          </button>
+          <button class="fb-rate__btn" data-fb-rate="down" type="button" role="radio" aria-checked="false">
+            <span class="fb-rate__emoji" aria-hidden="true">👎</span>
+            <span>没用</span>
+          </button>
+        </div>
+        <div class="field">
+          <label class="field__label" for="fbReason">原因标签 <span class="field__required" id="fbReasonRequired" hidden>*</span></label>
+          <select class="input" id="fbReason">
+            <option value="">— 请选择 —</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="field__label" for="fbCategory">类别</label>
+          <select class="input" id="fbCategory">
+            <option value="">— 请选择 —</option>
+          </select>
+          <span class="field__hint">由 LLM 自动归类，可手动调整</span>
+        </div>
+        <div class="field">
+          <label class="field__label" for="fbComment">详细说明 <span class="field__required" id="fbCommentRequired" hidden>*</span></label>
+          <textarea class="textarea" id="fbComment" rows="3" placeholder="说说哪里不够好（👎必填，5字以上）"></textarea>
+          <span class="field__hint" id="fbCommentHint">👍 可选 · 👎 必填（≥5 字）</span>
+        </div>
+      </div>
+      <footer class="fb-modal__foot">
+        <button class="btn btn--ghost" id="fbCancel" type="button">取消</button>
+        <button class="btn btn--primary" id="fbSubmit" type="button" disabled>提交反馈</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ===== Toast ===== -->
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
