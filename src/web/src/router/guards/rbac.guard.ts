@@ -1,6 +1,19 @@
-// rbac.guard — block routes when the user lacks `meta.permKey` (or any of
-// `meta.permKeys`). Super-admin short-circuits via wildcard `'*'` mirror of
-// backend `dependencies.py::require_permission`.
+// rbac.guard — block routes when the user lacks the required permissions.
+//
+// IMPORTANT (security default): when a route declares multiple keys via
+// `meta.permKeys`, the user must have ALL of them (AND semantics) unless the
+// route explicitly opts into OR via `meta.permMode: 'any'`. AND is the safer
+// default; OR is reserved for unified admin views where a single page hosts
+// multiple role capabilities (e.g. a doc-admin page that any doc:* capability
+// is allowed to enter).
+//
+// This guard is a UX gate (hide the page). The authoritative security
+// boundary lives in `backend/dependencies.py::require_permission`, which
+// checks each action call. A misconfigured frontend gate is mitigated by the
+// backend re-check on every API call.
+//
+// Super-admin short-circuits via wildcard `'*'`, mirroring backend
+// `_resolve_user_context` for super.
 
 import type { NavigationGuardWithThis } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
@@ -10,8 +23,8 @@ export const rbacGuard: NavigationGuardWithThis<undefined> = function (to, _from
   const auth = useAuthStore();
 
   // Public routes (e.g. /login) declare no permKey — skip guard entirely.
-  const required = collectRequiredPerms(to.meta);
-  if (required.length === 0) {
+  const rule = collectRequiredPerms(to.meta);
+  if (rule.keys.length === 0) {
     return next();
   }
 
@@ -20,7 +33,11 @@ export const rbacGuard: NavigationGuardWithThis<undefined> = function (to, _from
     return next();
   }
 
-  const allowed = required.some((key) => auth.permissions.includes(key));
+  const held = new Set(auth.permissions);
+  const allowed = rule.mode === 'any'
+    ? rule.keys.some((key) => held.has(key))
+    : rule.keys.every((key) => held.has(key));
+
   if (!allowed) {
     return next({ path: '/forbidden', query: { from: to.fullPath }, replace: true });
   }
@@ -28,14 +45,27 @@ export const rbacGuard: NavigationGuardWithThis<undefined> = function (to, _from
   return next();
 };
 
-/** Pull permKey(s) from route meta in a type-safe way. */
-function collectRequiredPerms(meta: unknown): string[] {
-  if (!meta || typeof meta !== 'object') return [];
+/** Perm requirement shape parsed from route meta. */
+interface PermRule {
+  keys: string[];
+  mode: 'any' | 'all';
+}
+
+/** Pull permKey(s) and permMode from route meta in a type-safe way. */
+function collectRequiredPerms(meta: unknown): PermRule {
+  const empty: PermRule = { keys: [], mode: 'all' };
+  if (!meta || typeof meta !== 'object') return empty;
   const m = meta as Record<string, unknown>;
-  const out: string[] = [];
-  if (typeof m.permKey === 'string') out.push(m.permKey);
+
+  const keys: string[] = [];
+  if (typeof m.permKey === 'string') keys.push(m.permKey);
   if (Array.isArray(m.permKeys)) {
-    for (const item of m.permKeys) if (typeof item === 'string') out.push(item);
+    for (const item of m.permKeys) if (typeof item === 'string') keys.push(item);
   }
-  return out;
+  if (keys.length === 0) return empty;
+
+  // Default 'all' (AND) is the safer gate; routes that intentionally want
+  // ANY-of (OR) must opt in explicitly via `permMode: 'any'`.
+  const mode: 'any' | 'all' = m.permMode === 'any' ? 'any' : 'all';
+  return { keys, mode };
 }

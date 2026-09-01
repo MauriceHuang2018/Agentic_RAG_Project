@@ -74,6 +74,21 @@ import { useAuthStore } from '@/stores/auth';
 import { useWorkspaceStore } from '@/stores/workspace';
 import { isGuardrailError, type NormalizedError } from '@/api/errors';
 
+/**
+ * Sanitize a redirect target to defeat open-redirect attacks.
+ * Only single-leading-slash paths are accepted; protocol-relative
+ * (`//evil.com`) and backslash variants (`/\\evil.com`) are rejected
+ * because browsers may resolve them as external hosts.
+ * Falls back to `/chat` when the candidate is missing or unsafe.
+ */
+function safeRedirect(candidate: unknown): string {
+  if (typeof candidate !== 'string') return '/chat';
+  if (candidate.length === 0 || candidate.length > 512) return '/chat';
+  if (candidate[0] !== '/') return '/chat';
+  if (candidate[1] === '/' || candidate[1] === '\\') return '/chat';
+  return candidate;
+}
+
 const { t } = useI18n();
 const auth = useAuthStore();
 const ws = useWorkspaceStore();
@@ -103,7 +118,7 @@ async function onSubmit(): Promise<void> {
     // Backend does not yet ship workspace list (Explore agent 2026-09-01);
     // bootstrap with placeholder so chat requests have an active id.
     ws.ensureFallback();
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/chat';
+    const redirect = safeRedirect(route.query.redirect);
     await router.replace(redirect);
   } catch (err) {
     // All API failures come through axios → client.ts → NormalizedError.
