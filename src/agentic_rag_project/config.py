@@ -172,10 +172,21 @@ class Settings(BaseSettings):
     metrics_allowed_cidrs: str = Field(default="")
     metrics_bearer_token: str = Field(default="")
 
-    # Demo accounts (M6 — `rbac.seed._ensure_demo_data`).
-    # Passwords live in `.env` (`DEMO_ALICE_PASSWORD` / `DEMO_BOB_PASSWORD`)
-    # so source never carries a secret. The literal defaults here match
-    # the original dev seed values; rotate by editing `.env`.
+    # Demo accounts (M6 — `rbac.seed.seed_demo_data`).
+    #
+    # SECURITY NOTE: these defaults are intentionally hardcoded literals,
+    # mirroring the existing `rbac.seed.DEMO_PASSWORD = "demo_pass"`
+    # pattern. The user authorized the trade-off (demo seed passwords
+    # must be git-trackable so the /chat smoke flow is reproducible
+    # without manual setup). They are NOT production secrets and must
+    # NEVER reach a real environment — `seed_demo_data` only fires
+    # from the lifespan and the demo rows are clearly named
+    # (`alice` / `bob`) with `is_super_admin=False`.
+    #
+    # Operators who want to rotate without editing source can override
+    # via `.env` (`DEMO_ALICE_PASSWORD` / `DEMO_BOB_PASSWORD`). The
+    # override path also exists so test fixtures can swap the values
+    # in-process (see `tests/test_demo_data_seed.py::test_..._rotates`).
     demo_alice_password: str = Field(default="alice_pass")
     demo_bob_password: str = Field(default="bob_pass")
 
