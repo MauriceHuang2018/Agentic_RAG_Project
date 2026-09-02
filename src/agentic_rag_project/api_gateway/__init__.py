@@ -28,6 +28,7 @@ from agentic_rag_project.api_gateway.documents_router import (
 from agentic_rag_project.api_gateway.feedback_router import (
     get_router as get_feedback_router,
 )
+from agentic_rag_project.api_gateway.me_router import router as me_router
 from agentic_rag_project.api_gateway.router import router as auth_router
 from agentic_rag_project.config import get_settings
 from agentic_rag_project.observability import (
@@ -43,6 +44,9 @@ gateway_router.include_router(get_documents_router(), prefix="/api/v1")
 gateway_router.include_router(get_chat_router(), prefix="/api/v1")
 gateway_router.include_router(get_feedback_router(), prefix="/api/v1")
 gateway_router.include_router(get_admin_router(), prefix="/api/v1")
+# `/me/*` — user-scoped endpoints (workspace picker, future /me/avatar,
+# /me/api-tokens per `docs/原型设计/前端页面规划与字段-表映射.md` §Page 14).
+gateway_router.include_router(me_router, prefix="/api/v1")
 
 # Prometheus scrape endpoint — mounted at ROOT, not under /api/v1,
 # per the standard Prometheus convention. The allowlist gates
