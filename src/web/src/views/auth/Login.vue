@@ -73,17 +73,24 @@ import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useWorkspaceStore } from '@/stores/workspace';
 import { isGuardrailError, type NormalizedError } from '@/api/errors';
+import { listMyWorkspaces } from '@/api/endpoints/me';
 
 /**
  * Sanitize a redirect target to defeat open-redirect attacks.
  * Only single-leading-slash paths are accepted; protocol-relative
  * (`//evil.com`) and backslash variants (`/\\evil.com`) are rejected
  * because browsers may resolve them as external hosts.
+ *
+ * 修 (2026-09-01)：根路径 `/` 也被拒绝。原实现只检查 `[0] === '/'`，
+  * 所以 `safeRedirect('/')` 返回 `/`，落到没有定义的根路由 →
+  * :pathMatch(.*)* → 404。改成 `length <= 1` 后，根和空串都
+  * 回退到 `/chat`（routes.ts 已声明 `path: '/'` redirect 到 /chat，
+  * 此处为防御纵深）。长度上限 512 防止异常长查询串。
  * Falls back to `/chat` when the candidate is missing or unsafe.
  */
 function safeRedirect(candidate: unknown): string {
   if (typeof candidate !== 'string') return '/chat';
-  if (candidate.length === 0 || candidate.length > 512) return '/chat';
+  if (candidate.length <= 1 || candidate.length > 512) return '/chat';
   if (candidate[0] !== '/') return '/chat';
   if (candidate[1] === '/' || candidate[1] === '\\') return '/chat';
   return candidate;
@@ -115,9 +122,21 @@ async function onSubmit(): Promise<void> {
   submitting.value = true;
   try {
     await auth.loginWithCredentials(form.username.trim(), form.password);
-    // Backend does not yet ship workspace list (Explore agent 2026-09-01);
-    // bootstrap with placeholder so chat requests have an active id.
-    ws.ensureFallback();
+    // Bootstrap the workspace switcher from the backend. Before
+    // `GET /me/workspaces` existed (closed 2026-09-02), the store
+    // hard-coded a `00000000-...` placeholder and chat requests
+    // returned 403 `not_a_member_of_workspace` for every real user.
+    // Failing here MUST NOT block login — if `/me/workspaces` 500s,
+    // the user still reaches `/chat`, which renders an empty-state
+    // (Chat.vue handles `visibleWorkspaces.length === 0`) instead of
+    // silently logging them out.
+    try {
+      const items = await listMyWorkspaces();
+      ws.setFromLogin(items);
+    } catch (wsErr) {
+      console.warn('[login] /me/workspaces failed; continuing with empty list', wsErr);
+      ws.clear();
+    }
     const redirect = safeRedirect(route.query.redirect);
     await router.replace(redirect);
   } catch (err) {

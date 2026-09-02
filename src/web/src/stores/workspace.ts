@@ -1,16 +1,18 @@
 // workspace store — tracks the active workspace and the workspace list.
 //
-// Backend status (Explore agent 2026-09-01):
-//   - GET /api/v1/workspaces does NOT exist.
-//   - UserContext.workspace_ids is constructed inside get_current_user and
-//     not exposed via any HTTP endpoint yet.
-//   - JWT payload does NOT carry workspace_ids.
+// Backend contract (api_gateway/me_router.py + dependencies.py):
+//   - GET /api/v1/me/workspaces returns the caller's workspaces
+//     ({id, name, isolation_level, status}), already filtered for the
+//     designated `__system__` container by `_resolve_user_context`.
+//   - The store seeds itself in `setFromLogin()` (called from
+//     Login.vue after a successful /auth/login).
 //
-// Until backend adds the list endpoint, the store accepts workspaces via
-// setFromLogin() (future use) and falls back to a single "primary" workspace
-// derived from the first non-`__system__` membership. This is a deliberate
-// "best-effort" state — chat requests will return 403 if the guessed id is
-// wrong, and the user will see a toast prompting them to contact an admin.
+// Pre-`/me/workspaces` (closed 2026-09-02): the store used to inject
+// a hard-coded `00000000-...-0000` placeholder so the chat page could
+// send SOMETHING. That broke every chat request with 403
+// `not_a_member_of_workspace` because the UUID didn't match any real
+// membership. Today the empty case is handled by Chat.vue's
+// empty-state alert — never by faking a workspace id.
 
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
@@ -23,7 +25,6 @@ export interface WorkspaceItem {
   status?: 'enable' | 'disable';
 }
 
-const PRIMARY_FALLBACK_NAME = 'primary';
 const ACTIVE_STORAGE_KEY = 'agentic_rag.active_workspace_id';
 
 function readStoredActive(): string | null {
@@ -72,8 +73,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   /**
-   * Bootstrap from login (when backend adds workspace_ids to login response).
-   * Drops `__system__` rows per backend `_resolve_user_context` semantics.
+   * Bootstrap from `GET /me/workspaces` (called by Login.vue right
+   * after a successful /auth/login). Filters `__system__` defensively
+   * even though the backend already removed it — Page 12 source data
+   * may surface placeholder rows in unrelated contexts.
+   *
+   * Also auto-picks the first workspace as `activeWorkspaceId` if
+   * nothing is currently selected AND we have at least one option.
    */
   function setFromLogin(items: WorkspaceItem[]): void {
     const filtered = items.filter((w) => !isInternalName(w.name));
@@ -84,20 +90,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   /**
-   * Last-resort fallback: when neither backend nor local cache has any
-   * workspace data, create a single "primary" placeholder. The next /chat/query
-   * will either succeed (backend default workspace) or 403 with a clear toast.
+   * Legacy no-op retained for any caller that imported it before
+   * `/me/workspaces` shipped. Used to inject a hard-coded
+   * `00000000-...-0000` placeholder — that path sent bogus chat
+   * requests and got 403 from `_resolve_workspace_id`. Now the
+   * function simply bails out and lets the caller decide (Chat.vue
+   * renders an empty-state when `visibleWorkspaces.length === 0`).
    */
   function ensureFallback(): void {
     if (workspaces.value.length > 0) return;
-    const fallback: WorkspaceItem = {
-      id: '00000000-0000-0000-0000-000000000000',
-      name: PRIMARY_FALLBACK_NAME,
-      isolationLevel: 'logical',
-      status: 'enable',
-    };
-    workspaces.value = [fallback];
-    if (!activeWorkspaceId.value) setActive(fallback.id);
+    // Deliberately a no-op: do NOT fabricate a workspace id.
   }
 
   function clear(): void {

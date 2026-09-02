@@ -26,6 +26,9 @@ export default {
     citation: '引用',
     emptyHistory: '暂无历史会话',
     newChat: '新建对话',
+    workspacePlaceholder: '暂无可用工作空间',
+    noWorkspaceTitle: '未分配工作空间',
+    noWorkspaceDesc: '请联系管理员为您分配工作空间后再使用智能问答',
     guardrail: {
       sensitive_word: '敏感词命中，已记录审计，请调整后重试',
       prompt_injection: '提问包含越权指令，已记录审计',

@@ -26,6 +26,9 @@ export default {
     citation: 'Citations',
     emptyHistory: 'No conversations yet',
     newChat: 'New chat',
+    workspacePlaceholder: 'No workspace available',
+    noWorkspaceTitle: 'No workspace assigned',
+    noWorkspaceDesc: 'Please contact your administrator to be assigned a workspace before chatting.',
     guardrail: {
       sensitive_word: 'Sensitive content detected and logged. Please revise.',
       prompt_injection: 'Privileged-instruction attempt detected and logged.',

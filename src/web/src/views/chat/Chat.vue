@@ -14,6 +14,8 @@
           v-model="activeWorkspace"
           size="small"
           style="width: 200px"
+          :disabled="workspaceStore.visibleWorkspaces.length === 0"
+          :placeholder="t('chat.workspacePlaceholder')"
           @change="onWorkspaceChange"
         >
           <el-option
@@ -41,7 +43,20 @@
       </aside>
 
       <main class="chat-main">
-        <el-scrollbar ref="scrollRef" class="chat-messages">
+        <el-alert
+          v-if="workspaceStore.visibleWorkspaces.length === 0"
+          type="warning"
+          :title="t('chat.noWorkspaceTitle')"
+          :description="t('chat.noWorkspaceDesc')"
+          show-icon
+          :closable="false"
+          class="chat-empty"
+        />
+        <el-scrollbar
+          v-else
+          ref="scrollRef"
+          class="chat-messages"
+        >
           <div class="chat-messages-inner">
             <MessageBubble
               v-for="m in chatMessages"
@@ -59,7 +74,10 @@
           </div>
         </el-scrollbar>
 
-        <ChatInput :disabled="isStreaming" @submit="onSubmitQuery" />
+        <ChatInput
+          :disabled="isStreaming || workspaceStore.visibleWorkspaces.length === 0"
+          @submit="onSubmitQuery"
+        />
       </main>
     </div>
 
@@ -199,8 +217,12 @@ async function onLogout(): Promise<void> {
 }
 
 // ─── Lifecycle ─────────────────────────────────────────────────────
+// Sync the dropdown's local ref with the store on mount. If the store
+// has no workspace data (e.g. `/me/workspaces` failed during login),
+// `activeWorkspace` stays null and the empty-state alert renders above
+// the input box — we never fall back to a fake UUID (the old behaviour
+// sent bogus chat requests that 403'd every time).
 onMounted(() => {
-  if (!workspaceStore.activeWorkspaceId) workspaceStore.ensureFallback();
   activeWorkspace.value = workspaceStore.activeWorkspaceId;
 });
 
@@ -264,6 +286,9 @@ watch(
 .chat-messages {
   flex: 1;
   padding: 16px 24px;
+}
+.chat-empty {
+  margin: 24px;
 }
 .chat-messages-inner {
   display: flex;
