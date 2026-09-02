@@ -179,6 +179,22 @@ services:
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-chunks_v1}
       LITELLM_BASE_URL: http://litellm:4000
       LITELLM_API_KEY: ${LITELLM_API_KEY:?LITELLM_API_KEY required}
+      # Model routing — env override slots for `infra/litellm_config.yaml#roles.*`.
+      # Defaults inside the container come from `Settings._LITELLM_ROLES`,
+      # which reads the YAML at module import. Passing them explicitly here
+      # as well gives ops a single docker-compose surface to swap models
+      # without rebuilding the image, AND keeps the YAML in sync (these
+      # values must be `model_name`s registered in `model_list`).
+      # `provider/name` form required: the rag-api's litellm Python client
+      # refuses bare names with `LLM Provider NOT provided`. See
+      # infra/litellm_config.yaml header for the full naming rationale.
+      # Closed 2026-09-02.
+      LITELLM_MODEL: openai/qwen3.7-plus
+      LITELLM_LONG_CONTEXT_MODEL: openai/deepseek-v4-flash-0731
+      # Embedding stays bare — `doc_processor/embedder.py` hits the proxy's
+      # /v1/embeddings endpoint via httpx with the bare name in the JSON
+      # body, no `provider/` prefix needed.
+      LITELLM_EMBEDDING_MODEL: text-embedding-v4
       # DeepDoc Server (independent LitServe, port 9390) — only consulted by
       # the visual_router for scanned PDFs and standalone images.
       RAGFLOW_BASE_URL: http://ragflow-deepdoc:9390

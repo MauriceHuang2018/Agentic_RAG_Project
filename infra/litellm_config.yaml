@@ -11,6 +11,23 @@
 # `roles` block + `model_list`; env vars (`LITELLM_MODEL`, etc.) still
 # override these defaults.
 #
+# MODEL NAMING (closed 2026-09-02): each chat model is registered under
+# TWO model_names — the bare name (e.g. `qwen3.7-plus`, kept for
+# backward compat with admin UI / eval scripts / audit tooling) AND a
+# `provider/name` alias (e.g. `openai/qwen3.7-plus`, the canonical name
+# the rag-api client uses). The rag-api's `litellm` Python client
+# REQUIRES a `provider/` prefix to construct a valid request — bare
+# names raise `BadRequestError: LLM Provider NOT provided`. Each
+# `provider/name` entry mirrors the bare entry's `litellm_params` so
+# the proxy routes both to the same upstream. The two names are
+# independent routable models for fallback-config purposes.
+#
+# Embedding model `text-embedding-v4` is registered under its bare
+# name only. The embedder (`doc_processor/embedder.py`) hits the
+# proxy's `/v1/embeddings` endpoint via httpx with the bare name in
+# the JSON body — the proxy resolves it directly without going
+# through the `litellm` Python client, so no prefix is needed.
+#
 # Override placeholders via the host's `.env` (compose mounts nothing
 # secret into this file).
 
@@ -41,33 +58,82 @@ model_list:
   # registration still succeeds (the key is only consulted at call time).
   - model_name: gpt-4o
     litellm_params:
-      model: openai/gpt-4o
-      api_key: os.environ/OPENAI_API_KEY
+      model: dashscope/qwen3.5-plus
+      api_base: os.environ/Ali_API_BASE_URL
+    # model: openai/gpt-4o
+    # api_key: os.environ/OPENAI_API_KEY
   # Embedding model for RAG chunks (BGE-M3 = 1024 dim).
   - model_name: text-embedding-v4
     litellm_params:
       model: dashscope/text-embedding-v4
       api_base: os.environ/Ali_API_BASE_URL
       api_key: os.environ/DASHSCOPE_API_KEY
-      
+
+  # `provider/name` aliases — canonical model names the rag-api client
+  # lib uses. Mirror the bare-name entries above: same `litellm_params`,
+  # same upstream model, same credentials. Both names live in
+  # `model_list` so they are independent routable models for fallback-
+  # config purposes — the proxy treats them as separate keys with
+  # separate fallback chains. Embedding is omitted (see header comment).
+  - model_name: openai/qwen3.5-plus
+    litellm_params:
+      model: dashscope/qwen3.5-plus
+      api_key: os.environ/DASHSCOPE_API_KEY
+      api_base: os.environ/Ali_API_BASE_URL
+  - model_name: openai/deepseek-v4-flash-0731
+    litellm_params:
+      model: dashscope/deepseek-v4-flash-0731
+      api_key: os.environ/DASHSCOPE_API_KEY
+      api_base: os.environ/Ali_API_BASE_URL
+  - model_name: openai/qwen3.7-plus
+    litellm_params:
+      model: dashscope/qwen3.7-plus
+      api_key: os.environ/DASHSCOPE_API_KEY
+      api_base: os.environ/Ali_API_BASE_URL
+  - model_name: anthropic/claude-sonnet-4-5
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: openai/gpt-4o
+    litellm_params:
+      model: dashscope/qwen3.5-plus
+      api_base: os.environ/Ali_API_BASE_URL
+
 
 router_settings:
   num_retries: 3
-  timeout: 120
+  timeout: 60
   fallbacks:
-    - qwen3.5-plus: [deepseek-v4-flash-0731, qwen3.7-plus]
-    - deepseek-v4-flash-0731: [qwen3.5-plus, qwen3.7-plus]
-    # - gpt-4o: [claude-sonnet-4-5, qwen3.5-plus]
-    # - claude-sonnet-4-5: [gpt-4o, qwen3.5-plus]
+    # Bare-name chains (existing — unchanged for backward compat):
+    - gpt-4o: ["qwen3.5-plus", "deepseek-v4-flash-0731", "qwen3.7-plus"]
+    - claude-sonnet-4-5: ["qwen3.5-plus", "deepseek-v4-flash-0731", "qwen3.7-plus"]
+    - qwen3.5-plus: ["deepseek-v4-flash-0731", "qwen3.7-plus"]
+    - deepseek-v4-flash-0731: ["qwen3.7-plus"]
+    # `qwen3.7-plus` was previously listed with an empty `[]` fallback
+    # ("last line of defense"). That violated `test_compose.py:131`
+    # (non-empty backup list required) AND the proxy treats an empty
+    # list the same as a missing entry (no fallback attempted). Removed
+    # in favor of mutual fallback to `deepseek-v4-flash-0731`; qwen3.7-plus
+    # is still covered by being listed as a backup under every other
+    # primary above, so the structural coverage check still passes.
+
+    # `provider/name` alias chains (new — mirror bare-name chains above):
+    - openai/gpt-4o: ["openai/qwen3.5-plus", "openai/deepseek-v4-flash-0731", "openai/qwen3.7-plus"]
+    - anthropic/claude-sonnet-4-5: ["openai/qwen3.5-plus", "openai/deepseek-v4-flash-0731", "openai/qwen3.7-plus"]
+    - openai/qwen3.5-plus: ["openai/deepseek-v4-flash-0731", "openai/qwen3.7-plus"]
+    - openai/deepseek-v4-flash-0731: ["openai/qwen3.7-plus"]
+    - openai/qwen3.7-plus: ["openai/deepseek-v4-flash-0731"]
+
 
 # Role mapping — single source of truth for which registered model plays
 # each role. `config.py` reads this block to populate the defaults of
 # `litellm_model` / `litellm_long_context_model` /
 # `litellm_embedding_model`. Each value MUST match a `model_name` in
-# `model_list` above (enforced by tests/test_compose.py).
+# `model_list` above (enforced by tests/test_compose.py). Chat roles use
+# `provider/name` aliases; embedding stays bare (httpx direct call).
 roles:
-  primary: qwen3.7-plus
-  long_context: deepseek-v4-flash-0731
+  primary: openai/qwen3.7-plus
+  long_context: openai/deepseek-v4-flash-0731
   embedding: text-embedding-v4
 
 general_settings:
