@@ -1666,6 +1666,20 @@
     return `
       <div class="toolbar">
         <input class="input" id="auditUserFilter" placeholder="按用户过滤..." style="max-width: 200px;" />
+        <select class="select" id="auditActionFilter" style="max-width: 180px;">
+          <option value="">全部动作</option>
+          <option value="query">query</option>
+          <option value="ingest">ingest</option>
+          <option value="delete">delete</option>
+          <option value="guardrail_block">guardrail_block</option>
+          <option value="access_denied">access_denied</option>
+          <option value="sensitive_word_update">sensitive_word_update</option>
+          <option value="role_bind">role_bind</option>
+          <option value="csat_read">csat_read</option>
+          <option value="feedback_submit">feedback_submit</option>
+          <option value="password_reset">password_reset</option>
+          <option value="login">login</option>
+        </select>
         <select class="select" id="auditResultFilter" style="max-width: 140px;">
           <option value="">全部结果</option>
           <option value="blocked">仅拦截</option>
@@ -1731,14 +1745,17 @@
       });
     });
     document.getElementById("auditUserFilter").addEventListener("input", filterAudit);
+    document.getElementById("auditActionFilter").addEventListener("change", filterAudit);
     document.getElementById("auditResultFilter").addEventListener("change", filterAudit);
   }
 
   function filterAudit() {
     const u = (document.getElementById("auditUserFilter").value || "").trim().toLowerCase();
+    const a = document.getElementById("auditActionFilter").value;
     const r = document.getElementById("auditResultFilter").value;
     const filtered = state.auditLogs.filter((row) => {
       if (u && !row.user.toLowerCase().includes(u)) return false;
+      if (a && row.action !== a) return false;
       if (r === "blocked" && !row.blocked) return false;
       if (r === "passed" && row.blocked) return false;
       return true;
@@ -3083,7 +3100,7 @@
     } else if (tab === "audit") {
       title.textContent = "审计日志";
       sub.textContent = "WORM 表 · 仅 INSERT，无编辑/删除入口（前端隐藏 + DB 触发器双重保险）";
-      actions.innerHTML = "";  // v2.0 §3.5+: audit 顶部 action 下拉已移除（按用户偏好）；保留右侧 actions slot 为空
+      actions.innerHTML = "";  // 顶部 actions slot 留空 — 按动作过滤已在下方 toolbar（id="auditActionFilter"）
       content.innerHTML = renderAuditView();
       bindAuditView();
     } else if (tab === "users") {
