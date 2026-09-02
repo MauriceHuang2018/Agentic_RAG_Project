@@ -47,6 +47,12 @@ COPY --from=builder /app/.venv /app/.venv
 
 # Copy the source tree.
 COPY src ./src
+# Bundle `infra/` so `config._load_litellm_yaml_defaults()` can resolve
+# `infra/litellm_config.yaml` at runtime — without this the container
+# falls through to the per-field defaults (e.g. `gpt-4o` for the
+# classifier) and every chat query times out before the litellm proxy
+# can hit its fallback chain. Closed 2026-09-02.
+COPY infra ./infra
 COPY pyproject.toml ./
 
 # Create non-root user for runtime.

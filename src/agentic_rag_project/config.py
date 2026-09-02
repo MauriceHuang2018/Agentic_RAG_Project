@@ -101,6 +101,15 @@ class Settings(BaseSettings):
     qdrant_embedding_cache_ttl_s: int = Field(default=3600)
 
     # LiteLLM
+    # `router_classifier_timeout_seconds` bounds the LLM call inside the
+    # route classifier (`router.classifier.LLMClassifier`). The classifier
+    # runs on every chat query to decide `agent` vs `direct`, so the
+    # default must be tight (10s) for snappy UX; raise it via env
+    # `ROUTER_CLASSIFIER_TIMEOUT_SECONDS` when the upstream litellm
+    # proxy's `router_settings.timeout * num_retries` budget exceeds 10s
+    # — otherwise the classifier kills the call before fallbacks can
+    # play out (closed 2026-09-02).
+    router_classifier_timeout_seconds: float = Field(default=10.0)
     litellm_base_url: str = Field(default="http://localhost:4000")
     litellm_api_key: str = Field(default="__FROM_SECRET__")
     # `litellm_model` defaults to `infra/litellm_config.yaml#roles.primary`

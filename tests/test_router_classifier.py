@@ -302,3 +302,56 @@ def test_classify_system_prompt_mentions_routes() -> None:
     assert "route" in CLASSIFY_SYSTEM_PROMPT
     assert "direct" in CLASSIFY_SYSTEM_PROMPT
     assert "agent" in CLASSIFY_SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# Settings-driven timeout (closed 2026-09-02)
+#
+# `LLMClassifier` defaults to 10s; main.py threads the budget from
+# `Settings.router_classifier_timeout_seconds` so ops can tune it via
+# `ROUTER_CLASSIFIER_TIMEOUT_SECONDS` without a code change. Without
+# that knob, a slow litellm fallback chain would let every chat query
+# time out before the classifier can even fall back to keyword.
+# ---------------------------------------------------------------------------
+
+
+def test_router_classifier_timeout_seconds_default_is_10(monkeypatch) -> None:
+    """Without the env var, the budget stays at the safe 10s default."""
+    monkeypatch.delenv("ROUTER_CLASSIFIER_TIMEOUT_SECONDS", raising=False)
+    from agentic_rag_project.config import get_settings
+
+    get_settings.cache_clear()
+    assert get_settings().router_classifier_timeout_seconds == pytest.approx(10.0)
+
+
+def test_router_classifier_timeout_seconds_env_override(monkeypatch) -> None:
+    """Env var `ROUTER_CLASSIFIER_TIMEOUT_SECONDS` overrides the default;
+    main.py must read it and pass it through to `LLMClassifier` so
+    ops can raise the budget when the litellm proxy's fallback chain
+    is slow."""
+    monkeypatch.setenv("ROUTER_CLASSIFIER_TIMEOUT_SECONDS", "60")
+    from agentic_rag_project.config import get_settings
+
+    get_settings.cache_clear()
+    assert get_settings().router_classifier_timeout_seconds == pytest.approx(60.0)
+
+
+def test_llm_classifier_threads_settings_timeout_into_llm_call(monkeypatch) -> None:
+    """End-to-end: ops bumps the env → main.py's `LLMClassifier(timeout_seconds=...)`
+    receives the new budget → the llm_call callable sees the raised value."""
+    monkeypatch.setenv("ROUTER_CLASSIFIER_TIMEOUT_SECONDS", "60")
+    from agentic_rag_project.config import get_settings
+
+    get_settings.cache_clear()
+    captured = {"timeout": None}
+
+    def _capture_call(system: str, user: str, timeout: float) -> dict:
+        captured["timeout"] = timeout
+        return {"route": "direct", "confidence": 0.5, "reason": "ok"}
+
+    llm = LLMClassifier(
+        llm_call=_capture_call,
+        timeout_seconds=get_settings().router_classifier_timeout_seconds,
+    )
+    llm.classify("anything")
+    assert captured["timeout"] == pytest.approx(60.0)

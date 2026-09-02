@@ -86,7 +86,13 @@ def _build_chat_service() -> ChatService | None:
         return None
 
     router = ConfidenceRouter(
-        llm_classifier=LLMClassifier(),
+        # Bound the classifier's LLM call by an env-tunable budget so the
+        # chat critical path doesn't wait forever when litellm's fallback
+        # chain is slow. Default 10s (see `config.router_classifier_timeout_seconds`)
+        # is comfortable for a healthy qwen3.7-plus (~3s measured).
+        llm_classifier=LLMClassifier(
+            timeout_seconds=settings.router_classifier_timeout_seconds,
+        ),
         keyword_classifier=KeywordClassifier(),
     )
     # AgentRunner expects `searcher.two_stage_search(...)` per agent_core/runner.py:75.
