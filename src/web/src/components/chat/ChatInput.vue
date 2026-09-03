@@ -13,6 +13,7 @@
       resize="none"
       @keydown.enter.exact.prevent="onSubmit"
     />
+    <div class="chat-input-hint">{{ t('chat.inputHint') }}</div>
     <div class="chat-input-actions">
       <el-button
         type="primary"
@@ -53,16 +54,36 @@ function onSubmit(): void {
 </script>
 
 <style scoped>
+/* PlanA v1.0 visual pass — composer with 1px hairline top border + hint row + focus ring. */
 .chat-input {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  background: #fff;
-  border-top: 1px solid #ebeef5;
+  gap: var(--s-2);
+  padding: var(--s-4) var(--s-8) var(--s-6);
+  background: var(--bg);
+  border-top: var(--hairline);
+}
+.chat-input-hint {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-3);
 }
 .chat-input-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+/* Element Plus textarea focus ring follows planA accent */
+:deep(.el-textarea__inner) {
+  resize: none;
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+  font-family: var(--font-body);
+}
+:deep(.el-textarea__inner):focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
 }
 </style>
