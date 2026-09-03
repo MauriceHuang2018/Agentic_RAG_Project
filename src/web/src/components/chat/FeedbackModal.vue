@@ -123,7 +123,32 @@ watch(error, (e) => {
 </script>
 
 <style scoped>
+/* PlanA v1.0 visual pass — dialog + radio button + result alert surface. */
+:deep(.el-dialog) {
+  border-radius: var(--r-lg);
+}
+:deep(.el-dialog__header) {
+  padding: var(--s-5) var(--s-6) var(--s-3);
+}
+:deep(.el-dialog__title) {
+  font-family: var(--font-display);
+  font-size: var(--fs-18);
+  font-weight: 600;
+  letter-spacing: var(--ls-display);
+  color: var(--text-1);
+}
+:deep(.el-dialog__body) {
+  padding: var(--s-3) var(--s-6) var(--s-5);
+}
+:deep(.el-dialog__footer) {
+  padding: var(--s-3) var(--s-6) var(--s-5);
+  border-top: var(--hairline);
+}
+:deep(.el-radio-button__inner) {
+  border-radius: var(--r-sm);
+}
 .feedback-result {
-  margin-top: 12px;
+  margin-top: var(--s-3);
+  border-radius: var(--r-md);
 }
 </style>
