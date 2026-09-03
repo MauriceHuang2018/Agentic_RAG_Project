@@ -148,7 +148,14 @@ def upload_document(
 
     doc = Document(
         id=uuid.UUID(document_id),
-        workspace_id=uuid.UUID(workspace_id),
+        # `ctx.workspace_ids` is frozenset[uuid.UUID] (see
+        # `api_gateway.dependencies.UserContext`) so the element is
+        # already a UUID — do NOT call uuid.UUID(workspace_id) again,
+        # that raised AttributeError 'UUID' object has no attribute
+        # 'replace' on every upload (closed 2026-09-03; was the
+        # follow-up tracked in memory under
+        # "Documents upload UUID double-wrap 2026-09-02").
+        workspace_id=workspace_id,
         owner_id=ctx.user_id,
         name=file.filename or "upload.bin",
         format=fmt,
@@ -192,9 +199,16 @@ def get_document_status(
     doc = session.get(Document, doc_uuid)
     if doc is None:
         raise HTTPException(status_code=404, detail="document not found")
-    if not ctx.is_super_admin and doc.workspace_id not in {
-        uuid.UUID(w) for w in ctx.workspace_ids
-    }:
+    # `ctx.workspace_ids` is frozenset[uuid.UUID] (see
+    # `api_gateway.dependencies.UserContext`) so the elements are
+    # already UUIDs — do NOT call `uuid.UUID(w)` again, that raised
+    # AttributeError 'UUID' object has no attribute 'replace' on
+    # every GET (closed 2026-09-03 alongside the upload-side fix
+    # at line ~158; both were part of the same pre-existing
+    # "Documents upload UUID double-wrap" defect tracked under
+    # "Documents upload UUID double-wrap 2026-09-02" — name is
+    # misleading; the bug spans read + write paths).
+    if not ctx.is_super_admin and doc.workspace_id not in ctx.workspace_ids:
         raise HTTPException(status_code=403, detail="not authorized for this document")
 
     last_error = (doc.metadata_ or {}).get("last_error") if doc.metadata_ else None
