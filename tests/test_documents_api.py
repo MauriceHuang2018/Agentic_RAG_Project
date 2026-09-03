@@ -72,7 +72,11 @@ def in_memory_db(monkeypatch: pytest.MonkeyPatch) -> sessionmaker:
         ws = Workspace(id=uuid.uuid4(), name="ws-1", owner_id=u.id, status="enable")
         s.add(ws)
         s.commit()
-        ws_id, user_id = str(ws.id), str(u.id)
+        # Return real UUID objects, not str — Document.workspace_id is
+        # `Mapped[uuid.UUID]` so SQLAlchemy's UUID processor calls
+        # `.hex` on the value. A str slips through UserContext because
+        # `frozenset` is heterogeneous, then explodes at INSERT.
+        ws_id, user_id = ws.id, u.id
 
     from agentic_rag_project.db import session as db_session
 
@@ -108,11 +112,11 @@ def client(
 
     def _fake_current_user() -> UserContext:
         return UserContext(
-            user_id=uuid.UUID(user_id),
+            user_id=user_id,  # already a UUID
             username="alice",
             is_super_admin=True,
             status="enable",
-            workspace_ids=frozenset({ws_id}),
+            workspace_ids=frozenset({ws_id}),  # already a UUID
             permissions=frozenset({"*"}),
         )
 

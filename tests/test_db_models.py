@@ -106,15 +106,19 @@ def test_workspace_status_column_is_not_nullable() -> None:
 
 def test_chunk_distinguishes_parent_and_child() -> None:
     """Chunk.is_parent flag governs the two-stage retrieval grouping."""
+    doc_id = uuid.uuid4()
+    ws_id = uuid.uuid4()  # chunks.workspace_id NOT NULL (migration 0013)
     parent = Chunk(
-        document_id=uuid.uuid4(),
+        document_id=doc_id,
+        workspace_id=ws_id,
         chunk_index=0,
         content="chapter",
         content_hash="a" * 64,
         is_parent=True,
     )
     child = Chunk(
-        document_id=uuid.uuid4(),
+        document_id=doc_id,
+        workspace_id=ws_id,
         chunk_index=1,
         content="paragraph",
         content_hash="b" * 64,

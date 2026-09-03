@@ -95,6 +95,7 @@ def session() -> Session:
         c = Chunk(
             id=cid,
             document_id=doc.id,
+            workspace_id=ws.id,  # NOT NULL — see Chunk.workspace_id + migration 0013
             chunk_index=i,
             content=f"chunk-{i} content",
             content_hash=f"h-{i}",
