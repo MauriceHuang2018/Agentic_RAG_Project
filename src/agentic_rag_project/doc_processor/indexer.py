@@ -176,7 +176,14 @@ def index(
     coll = collection or settings.qdrant_collection
     ensure_collection(qdrant, coll)
 
-    doc_uuid = _chunk_uuid(document_id)
+    # `document_id` here is the canonical Document row UUID returned by
+    # the upload endpoint (the FK target on `chunks.document_id`). It
+    # MUST be the literal UUID, not a hash of it — `_chunk_uuid` would
+    # re-hash the string into a different v5 UUID that doesn't exist in
+    # `documents`, breaking the FK and causing retry storms.
+    # (Bug surfaced 2026-09-04: P0 wiring forwarded `document_id` from
+    # Celery unchanged, but indexer.apply_uuid5() shadowed it.)
+    doc_uuid = uuid.UUID(document_id)
     ws_uuid = uuid.UUID(workspace_id)
 
     # 1. upsert children into Qdrant

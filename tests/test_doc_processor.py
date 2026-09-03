@@ -405,12 +405,16 @@ def test_ensure_collection_idempotent() -> None:
 
 
 def test_index_writes_qdrant_and_pg() -> None:
-    # workspace_id must be a valid UUID hex string — indexer.index()
-    # converts it via uuid.UUID(workspace_id) to populate the chunks
-    # FK column. P0 / 2026-09-03.
+    # document_id is a canonical UUID hex string — indexer.index() now
+    # applies uuid.UUID() to whatever document_id string it receives
+    # (was _chunk_uuid() pre-2026-09-04, which hashed the string into a
+    # different UUID5 and silently broke chunks.document_id FK in
+    # production). workspace_id is also a valid UUID hex string for
+    # the chunks.workspace_id FK (P0 / 2026-09-03).
+    doc_uuid_str = str(uuid.uuid4())
     ws_uuid_str = str(uuid.uuid4())
     parent = ParentChunk(
-        document_id="doc-1",
+        document_id=doc_uuid_str,
         workspace_id=ws_uuid_str,
         content="parent text",
         section_heading="S1",
@@ -421,7 +425,7 @@ def test_index_writes_qdrant_and_pg() -> None:
     embedded = [
         EmbeddedChunk(
             chunk_id="child-1",
-            document_id="doc-1",
+            document_id=doc_uuid_str,
             parent_id="parent-1",
             workspace_id=ws_uuid_str,
             content="child text",
@@ -435,7 +439,7 @@ def test_index_writes_qdrant_and_pg() -> None:
     result = index(
         parents=[parent],
         embedded=embedded,
-        document_id="doc-1",
+        document_id=doc_uuid_str,
         workspace_id=ws_uuid_str,
         qdrant=fake,  # type: ignore[arg-type]
         session=session,

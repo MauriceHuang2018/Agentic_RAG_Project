@@ -62,9 +62,13 @@ def _seed_workspace_user_document(
 ) -> uuid.UUID:
     """Insert the FK chain so ``chunks.document_id`` FK resolves.
 
-    ``document_id`` MUST equal ``indexer._chunk_uuid(<doc_string>)`` because
-    indexer converts the doc string into a UUID via that helper and uses it
-    as the FK target. We seed with that same UUID so the FK resolves.
+    ``document_id`` MUST be a literal UUID — indexer applies
+    ``uuid.UUID(document_id)`` to whatever string it receives, so we
+    seed the ``documents.id`` row with the same UUID we then pass to
+    ``indexer.index(document_id=str(<this>))`` and through to
+    ParentChunk / EmbeddedChunk. Hashing the document id (the old
+    ``_chunk_uuid(document_id)`` behaviour) would yield a different
+    UUID5 that does not exist in ``documents``, breaking the FK.
 
     Returns the workspace UUID (a fresh one if not provided) so the caller
     can plumb the same hex string into EmbeddedChunk/ParentChunk literals
@@ -218,23 +222,24 @@ def make_index_call(pg_test_engine, pg_schema_session):
 
 def test_index_is_idempotent_across_two_runs(pg_test_engine, pg_schema_session, make_index_call):
     """Re-indexing the same document must not duplicate PG rows or Qdrant points."""
-    from agentic_rag_project.doc_processor import indexer
-
-    # document_id is a string the indexer converts via _chunk_uuid; we seed
-    # the documents row with that exact UUID so the chunks.document_id FK resolves.
-    document_id = f"smoke-idem-{uuid.uuid4().hex[:8]}"
-    document_uuid = indexer._chunk_uuid(document_id)
+    # document_id is a literal UUID — indexer applies uuid.UUID() to it and
+    # writes that into chunks.document_id (FK target). The documents row is
+    # seeded with this same UUID so the FK resolves. Prior to 2026-09-04
+    # indexer hashed the string via _chunk_uuid() and the test matched that
+    # behaviour; both layers were wrong (production documents.id is a
+    # canonical UUID, never a derived UUID5).
+    document_id = uuid.uuid4()
     workspace_id_obj = uuid.uuid4()
     workspace_id_str = str(workspace_id_obj)
 
     with pg_test_engine.begin() as conn:
         conn.execute(text(f'SET search_path TO "{pg_schema_session}"'))
         _seed_workspace_user_document(
-            conn, pg_schema_session, document_uuid, workspace_id=workspace_id_obj
+            conn, pg_schema_session, document_id, workspace_id=workspace_id_obj
         )
 
     # Pass 1: baseline
-    first = make_index_call(document_id, workspace_id_str=workspace_id_str)
+    first = make_index_call(str(document_id), workspace_id_str=workspace_id_str)
     assert first["result"].parent_chunks_written == 3
     assert first["result"].child_chunks_written == 6
     assert first["pg_total"] == 9
@@ -242,7 +247,7 @@ def test_index_is_idempotent_across_two_runs(pg_test_engine, pg_schema_session, 
     assert len(first["qdrant"].points) == 6
 
     # Pass 2: must be a no-op for row counts.
-    second = make_index_call(document_id, workspace_id_str=workspace_id_str)
+    second = make_index_call(str(document_id), workspace_id_str=workspace_id_str)
     assert second["pg_total"] == 9, (
         f"PG row count doubled on reindex: {first['pg_total']} -> {second['pg_total']}"
     )
@@ -266,21 +271,21 @@ def test_index_upsert_updates_content_on_change(pg_test_engine, pg_schema_sessio
     from agentic_rag_project.doc_processor.models import EmbeddedChunk, ParentChunk
     from sqlalchemy.orm import sessionmaker
 
-    document_id = f"smoke-upd-{uuid.uuid4().hex[:8]}"
-    document_uuid = indexer._chunk_uuid(document_id)
+    document_id = uuid.uuid4()
+    document_id_str = str(document_id)
     workspace_id_obj = uuid.uuid4()
     workspace_id_str = str(workspace_id_obj)
     with pg_test_engine.begin() as conn:
         conn.execute(text(f'SET search_path TO "{pg_schema_session}"'))
         _seed_workspace_user_document(
-            conn, pg_schema_session, document_uuid, workspace_id=workspace_id_obj
+            conn, pg_schema_session, document_id, workspace_id=workspace_id_obj
         )
 
     # Single parent + single child, then mutate the child's content and rerun.
-    parent = ParentChunk(**_make_parent(document_id, 0, workspace_id=workspace_id_str))
+    parent = ParentChunk(**_make_parent(document_id_str, 0, workspace_id=workspace_id_str))
     embedded_v1 = [
         EmbeddedChunk(
-            **_make_embedded(document_id, parent.chunk_id, 0, workspace_id=workspace_id_str),
+            **_make_embedded(document_id_str, parent.chunk_id, 0, workspace_id=workspace_id_str),
         )
     ]
     # Mutate the in-memory content without changing chunk_id so the second
@@ -293,7 +298,7 @@ def test_index_upsert_updates_content_on_change(pg_test_engine, pg_schema_sessio
         indexer.index(
             parents=[parent],
             embedded=embedded_v1,
-            document_id=document_id,
+            document_id=document_id_str,
             workspace_id=workspace_id_str,
             qdrant=fake,
             session=session,
@@ -303,7 +308,7 @@ def test_index_upsert_updates_content_on_change(pg_test_engine, pg_schema_sessio
     # Re-run with mutated child content but the same chunk_id.
     embedded_v2 = [
         EmbeddedChunk(
-            **_make_embedded(document_id, parent.chunk_id, 0, workspace_id=workspace_id_str),
+            **_make_embedded(document_id_str, parent.chunk_id, 0, workspace_id=workspace_id_str),
         )
     ]
     embedded_v2[0].content = "child v2 EDITED"
@@ -312,7 +317,7 @@ def test_index_upsert_updates_content_on_change(pg_test_engine, pg_schema_sessio
         indexer.index(
             parents=[parent],
             embedded=embedded_v2,
-            document_id=document_id,
+            document_id=document_id_str,
             workspace_id=workspace_id_str,
             qdrant=fake,
             session=session,
@@ -342,20 +347,20 @@ def test_qdrant_point_payload_includes_workspace_id(
     from agentic_rag_project.doc_processor.models import EmbeddedChunk, ParentChunk
     from sqlalchemy.orm import sessionmaker
 
-    document_id = f"smoke-wsid-{uuid.uuid4().hex[:8]}"
-    document_uuid = indexer._chunk_uuid(document_id)
+    document_id = uuid.uuid4()
+    document_id_str = str(document_id)
     workspace_id_obj = uuid.uuid4()
     workspace_id_str = str(workspace_id_obj)
     with pg_test_engine.begin() as conn:
         conn.execute(text(f'SET search_path TO "{pg_schema_session}"'))
         _seed_workspace_user_document(
-            conn, pg_schema_session, document_uuid, workspace_id=workspace_id_obj
+            conn, pg_schema_session, document_id, workspace_id=workspace_id_obj
         )
 
-    parent = ParentChunk(**_make_parent(document_id, 0, workspace_id=workspace_id_str))
+    parent = ParentChunk(**_make_parent(document_id_str, 0, workspace_id=workspace_id_str))
     embedded = [
         EmbeddedChunk(
-            **_make_embedded(document_id, parent.chunk_id, 0, workspace_id=workspace_id_str),
+            **_make_embedded(document_id_str, parent.chunk_id, 0, workspace_id=workspace_id_str),
         )
     ]
     fake = _FakeQdrant()
@@ -365,7 +370,7 @@ def test_qdrant_point_payload_includes_workspace_id(
         indexer.index(
             parents=[parent],
             embedded=embedded,
-            document_id=document_id,
+            document_id=document_id_str,
             workspace_id=workspace_id_str,
             qdrant=fake,
             session=session,
