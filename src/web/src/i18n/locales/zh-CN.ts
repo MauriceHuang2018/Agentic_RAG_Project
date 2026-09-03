@@ -19,6 +19,7 @@ export default {
   },
   chat: {
     placeholder: '请输入你的问题…',
+    inputHint: '按 Enter 发送 · Shift + Enter 换行',
     send: '发送',
     stop: '停止生成',
     feedbackLike: '有帮助',

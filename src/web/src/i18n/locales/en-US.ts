@@ -19,6 +19,7 @@ export default {
   },
   chat: {
     placeholder: 'Ask a question…',
+    inputHint: 'Press Enter to send · Shift + Enter for newline',
     send: 'Send',
     stop: 'Stop',
     feedbackLike: 'Helpful',
