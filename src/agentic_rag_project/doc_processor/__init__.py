@@ -95,22 +95,28 @@ class DocProcessor:
         *,
         session: Session,
         document_id: str | None = None,
+        workspace_id: str,
     ) -> IndexResult:
         """End-to-end: file → parents + embedded children → Qdrant + PG.
 
         Caller owns the SQLAlchemy session's lifecycle (commit / rollback).
+        `workspace_id` is required (no default) — every emitted chunk
+        (ParentChunk / ChildChunk / EmbeddedChunk / PG row / Qdrant
+        payload) carries it so the chat ACL filter can scope retrieval.
+        P0 / 2026-09-03 — see docs/workspace_id_pipeline/.
         """
         if self._qdrant is None:
             raise ValueError("DocProcessor requires a QdrantClient")
         doc_id = document_id or str(uuid.uuid4())
         parsed = _parse_document(file_path, self._parser)
-        parents, children = chunk_parsed_doc(parsed, doc_id)
+        parents, children = chunk_parsed_doc(parsed, doc_id, workspace_id)
         if not children:
             logger.warning("document %s produced no children — nothing to index", doc_id)
             return index(
                 parents=parents,
                 embedded=[],
                 document_id=doc_id,
+                workspace_id=workspace_id,
                 qdrant=self._qdrant,
                 session=session,
                 collection=self._collection,
@@ -120,6 +126,7 @@ class DocProcessor:
             parents=parents,
             embedded=embedded,
             document_id=doc_id,
+            workspace_id=workspace_id,
             qdrant=self._qdrant,
             session=session,
             collection=self._collection,
@@ -144,10 +151,23 @@ def process_document(
     embedder: LiteLLMEmbedder | None = None,
     collection: str | None = None,
     document_id: str | None = None,
+    workspace_id: str,
 ) -> IndexResult:
-    """Module-level one-shot wrapper around DocProcessor.process()."""
+    """Module-level one-shot wrapper around DocProcessor.process().
+
+    `workspace_id` is required (no default). It threads through to the
+    chunker, embedder, and indexer so every emitted chunk — both the
+    PG `chunks` row and the Qdrant payload — carries it. The chat
+    ACL filter relies on this field being set on every retrievable
+    chunk (P0 / 2026-09-03).
+    """
     proc = DocProcessor(parser=parser, embedder=embedder, qdrant=qdrant, collection=collection)
     try:
-        return proc.process(file_path, session=session, document_id=document_id)
+        return proc.process(
+            file_path,
+            session=session,
+            document_id=document_id,
+            workspace_id=workspace_id,
+        )
     finally:
         proc.close()

@@ -93,6 +93,10 @@ class ParentChunk(BaseModel):
 
     chunk_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     document_id: str
+    # workspace_id is required (no default) so construction fails fast
+    # when an upstream caller forgot to thread it. The chunker + the
+    # Celery task both load it from the parent `Document.workspace_id`.
+    workspace_id: str
     content: str
     section_heading: str
     page_start: NonNegativeInt = 0
@@ -105,6 +109,11 @@ class ChildChunk(BaseModel):
 
     chunk_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     document_id: str
+    # See ParentChunk.workspace_id — same rationale: required,
+    # fail-fast at Pydantic validation when an upstream caller
+    # drops it. The chunker + Celery task thread it from
+    # Document.workspace_id (P0 / 2026-09-03).
+    workspace_id: str
     parent_id: str
     content: str
     block_kind: Literal[
@@ -122,6 +131,11 @@ class EmbeddedChunk(BaseModel):
 
     chunk_id: str
     document_id: str
+    # See ParentChunk.workspace_id — same rationale. The embedder
+    # mirrors the chunk's workspace_id onto both the EmbeddedChunk
+    # attribute AND the Qdrant payload dict so ACL filters can read
+    # it without re-joining to PG (P0 / 2026-09-03).
+    workspace_id: str
     parent_id: str
     content: str
     dense_vector: list[float]

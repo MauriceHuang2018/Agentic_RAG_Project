@@ -122,12 +122,18 @@ class LiteLLMEmbedder:
                 EmbeddedChunk(
                     chunk_id=chunk.chunk_id,
                     document_id=chunk.document_id,
+                    # Mirror the chunk's workspace_id onto both the
+                    # EmbeddedChunk attribute AND the Qdrant payload
+                    # dict so the chat ACL filter can scope retrieval
+                    # without a second hop back to PG (P0 / 2026-09-03).
+                    workspace_id=chunk.workspace_id,
                     parent_id=chunk.parent_id,
                     content=chunk.content,
                     dense_vector=vec,
                     sparse_vector=sparse,
                     payload={
                         "document_id": chunk.document_id,
+                        "workspace_id": chunk.workspace_id,
                         "parent_id": chunk.parent_id,
                         "block_kind": chunk.block_kind,
                         "page": chunk.page,

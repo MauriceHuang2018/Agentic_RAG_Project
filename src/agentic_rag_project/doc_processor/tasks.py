@@ -45,18 +45,26 @@ def _open_session() -> Session:
     return _session_factory()()
 
 
-def _update_document_status(document_id: str, status: str, error: str | None = None) -> None:
-    """Flip the Document.status field for the given UUID (string form)."""
+def _update_document_status(document_id: str, status: str, error: str | None = None) -> Document | None:
+    """Flip the Document.status field for the given UUID (string form).
+
+    Returns the loaded `Document` so callers can read derived fields
+    (notably `workspace_id` — needed by `parse_document_task` to
+    thread through the doc-processor pipeline). Returns None if
+    the document vanished between scheduling and dispatch
+    (legitimate in tests with monkey-patched storage).
+    """
     session = _open_session()
     try:
         doc = session.get(Document, document_id)
         if doc is None:
             logger.warning("document %s vanished before status update", document_id)
-            return
+            return None
         doc.status = status
         if error is not None:
             doc.metadata_ = {**(doc.metadata_ or {}), "last_error": error}
         session.commit()
+        return doc
     except Exception:
         session.rollback()
         raise
@@ -77,7 +85,11 @@ def parse_document_task(self: Any, document_id: str) -> dict[str, Any]:
     """Async pipeline: load -> parse -> chunk -> embed -> index -> ready."""
     settings = get_settings()
     logger.info("parse_document_task starting for %s", document_id)
-    _update_document_status(document_id, "processing")
+    doc = _update_document_status(document_id, "processing")
+    if doc is None:
+        # Document vanished — nothing to process; Celery's autoretry
+        # policy decides whether to retry the whole task.
+        raise RuntimeError(f"document {document_id} not found")
 
     try:
         file_path = resolve_document_file(document_id)
@@ -96,6 +108,11 @@ def parse_document_task(self: Any, document_id: str) -> dict[str, Any]:
                 embedder=embedder,
                 collection=settings.qdrant_collection,
                 document_id=document_id,
+                # P0 / 2026-09-03: thread the parent document's
+                # workspace_id into the pipeline so every emitted
+                # chunk (PG row + Qdrant payload) carries it. Without
+                # this, ACL filters have nothing to scope on.
+                workspace_id=str(doc.workspace_id),
             )
         finally:
             parser.close()

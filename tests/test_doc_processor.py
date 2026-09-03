@@ -149,14 +149,19 @@ def _make_parsed_with_sections() -> ParsedDoc:
 
 def test_chunker_emits_one_parent_per_section() -> None:
     parsed = _make_parsed_with_sections()
-    parents, children = chunk_parsed_doc(parsed, document_id="doc-1")
+    parents, children = chunk_parsed_doc(parsed, document_id="doc-1", workspace_id="ws-1")
     assert len(parents) == 2
     assert {p.section_heading for p in parents} == {"Chapter 1", "Chapter 2"}
+    # P0 / 2026-09-03: workspace_id must propagate to every emitted chunk.
+    for p in parents:
+        assert p.workspace_id == "ws-1"
+    for c in children:
+        assert c.workspace_id == "ws-1"
 
 
 def test_chunker_emits_parent_child_linkage() -> None:
     parsed = _make_parsed_with_sections()
-    parents, children = chunk_parsed_doc(parsed, document_id="doc-1")
+    parents, children = chunk_parsed_doc(parsed, document_id="doc-1", workspace_id="ws-1")
     child_index = {c.chunk_id: c for c in children}
     for parent in parents:
         for cid in parent.child_ids:
@@ -165,7 +170,7 @@ def test_chunker_emits_parent_child_linkage() -> None:
 
 def test_chunker_keeps_tables_atomic() -> None:
     parsed = _make_parsed_with_sections()
-    _, children = chunk_parsed_doc(parsed, document_id="doc-1")
+    _, children = chunk_parsed_doc(parsed, document_id="doc-1", workspace_id="ws-1")
     table_kinds = [c.block_kind for c in children if c.block_kind == "table"]
     assert len(table_kinds) == 1
 
@@ -188,7 +193,7 @@ def test_chunker_respects_child_budget() -> None:
         ],
         page_count=1,
     )
-    _, children = chunk_parsed_doc(parsed, document_id="doc-1", child_max_chars=500)
+    _, children = chunk_parsed_doc(parsed, document_id="doc-1", workspace_id="ws-1", child_max_chars=500)
     # 3 blocks of 400 chars with 500-char budget → at least 2 children.
     assert len(children) >= 2
 
@@ -207,7 +212,7 @@ def test_chunker_truncates_oversize_parents() -> None:
         ],
         page_count=1,
     )
-    parents, _ = chunk_parsed_doc(parsed, document_id="doc-1", parent_max_chars=200)
+    parents, _ = chunk_parsed_doc(parsed, document_id="doc-1", workspace_id="ws-1", parent_max_chars=200)
     assert parents[0].content.endswith("...")
 
 
@@ -320,6 +325,7 @@ def test_litellm_embedder_assembles_embedded_chunk() -> None:
     chunk = ChildChunk(
         document_id="d",
         parent_id="p",
+        workspace_id="ws-1",
         content="hello world",
         block_kind="text",
         page=0,
@@ -399,8 +405,13 @@ def test_ensure_collection_idempotent() -> None:
 
 
 def test_index_writes_qdrant_and_pg() -> None:
+    # workspace_id must be a valid UUID hex string — indexer.index()
+    # converts it via uuid.UUID(workspace_id) to populate the chunks
+    # FK column. P0 / 2026-09-03.
+    ws_uuid_str = str(uuid.uuid4())
     parent = ParentChunk(
         document_id="doc-1",
+        workspace_id=ws_uuid_str,
         content="parent text",
         section_heading="S1",
         page_start=0,
@@ -412,6 +423,7 @@ def test_index_writes_qdrant_and_pg() -> None:
             chunk_id="child-1",
             document_id="doc-1",
             parent_id="parent-1",
+            workspace_id=ws_uuid_str,
             content="child text",
             dense_vector=[0.0] * 1024,
             sparse_vector={12345: 0.5},
@@ -424,6 +436,7 @@ def test_index_writes_qdrant_and_pg() -> None:
         parents=[parent],
         embedded=embedded,
         document_id="doc-1",
+        workspace_id=ws_uuid_str,
         qdrant=fake,  # type: ignore[arg-type]
         session=session,
         collection="chunks_v1",
@@ -432,6 +445,47 @@ def test_index_writes_qdrant_and_pg() -> None:
     assert result.child_chunks_written == 1
     assert result.pg_chunk_rows == 2
     assert len(fake.points) == 1
+
+
+def test_chunk_payload_includes_workspace_id() -> None:
+    """EmbeddedChunk must carry workspace_id so Qdrant payload mirrors it.
+
+    The chat ACL filter scopes retrieval by ``workspace_id``; if the
+    payload lacks the field, every Qdrant hit is filtered out → empty
+    answer. P0 / 2026-09-03.
+    """
+    fake_response = {"data": [{"embedding": [0.0] * 1024}]}
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return fake_response
+
+    class _Client:
+        def post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> _Resp:  # noqa: A002
+            return _Resp()
+
+    chunk = ChildChunk(
+        document_id="d",
+        parent_id="p",
+        workspace_id="ws-42",
+        content="hello world",
+        block_kind="text",
+        page=0,
+    )
+    embedder = LiteLLMEmbedder(
+        base_url="http://litellm",
+        api_key="test",
+        model="bge-m3",
+        client=_Client(),  # type: ignore[arg-type]
+    )
+    out = embedder.embed_chunks([chunk])
+    assert len(out) == 1
+    # EmbeddedChunk attribute AND payload dict both expose workspace_id.
+    assert out[0].workspace_id == "ws-42"
+    assert out[0].payload["workspace_id"] == "ws-42"
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +545,7 @@ def test_process_document_end_to_end_with_fakes(tmp_path: Path) -> None:
         parser=FakeParser(),  # type: ignore[arg-type]
         embedder=fake_embedder,
         collection="chunks_v1",
+        workspace_id=str(uuid.uuid4()),
     )
     assert result.parent_chunks_written == 1
     assert result.child_chunks_written == 1

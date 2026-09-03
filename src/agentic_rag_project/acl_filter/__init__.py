@@ -33,12 +33,23 @@ DESIGN reference:
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from qdrant_client.http import models as qmodels
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from agentic_rag_project.api_gateway.dependencies import UserContext
+# `UserContext` lives in `api_gateway.dependencies`, which itself
+# imports from `api_gateway/__init__.py` (the gateway package
+# re-exports every router). Importing `UserContext` at module load
+# would form a cycle:
+#   acl_filter → api_gateway.dependencies → api_gateway
+#   → chat_router → acl_filter.
+# Use TYPE_CHECKING for the annotation so static type checkers still
+# see the type, and lazy-import the real symbol inside
+# `build_user_filter` at call time. P0 / 2026-09-03.
+if TYPE_CHECKING:
+    from agentic_rag_project.api_gateway.dependencies import UserContext
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +79,7 @@ def _never_match_filter() -> qmodels.Filter:
 
 
 def build_user_filter(
-    ctx: UserContext,
+    ctx: "UserContext",
     session: Session,
 ) -> qmodels.Filter:
     """Construct the Qdrant pre-filter for the calling user.

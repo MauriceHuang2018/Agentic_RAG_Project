@@ -105,6 +105,16 @@ class Chunk(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
+    # workspace_id mirrors the parent document's workspace — required
+    # NOT NULL so ACL filters can scope queries without a JOIN back to
+    # documents. Migration 0013 (2026-09-03) added the column +
+    # backfilled from documents.workspace_id + tightened to NOT NULL.
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(
