@@ -25,8 +25,12 @@ from agentic_rag_project.db.models.documents import Document
 from agentic_rag_project.db.session import _session_factory
 from agentic_rag_project.doc_processor.celery_app import celery_app
 from agentic_rag_project.doc_processor.embedder import LiteLLMEmbedder
-from agentic_rag_project.doc_processor.parser import DeepDocClient
+from agentic_rag_project.doc_processor.parser import (
+    DeepDocClient,
+    parse_document_with_router,
+)
 from agentic_rag_project.doc_processor.storage import resolve_document_file
+from agentic_rag_project.doc_processor.visual_router import DeepDocVisualRouter
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +97,19 @@ def parse_document_task(self: Any, document_id: str) -> dict[str, Any]:
 
     try:
         file_path = resolve_document_file(document_id)
-        parser = DeepDocClient()
+        # Parse via the format dispatcher (DESIGN §2.5) — structured
+        # formats use in-process extractors and never touch DeepDoc;
+        # only scanned PDFs are routed through the visual path. The
+        # legacy `client.parse()` entrypoint is bypassed because it
+        # fell back to a RapidOCR path that imports cv2 — broken in
+        # this image since libxcb.so.1 is missing (diag 2026-09-03).
+        # `fallback_ocr=False` makes scanned-PDF failures hard-fail
+        # rather than silently retry into the same broken path.
+        deepdoc = DeepDocClient()
+        visual_router = DeepDocVisualRouter(
+            deepdoc,
+            fallback_ocr=False,
+        )
         embedder = LiteLLMEmbedder()
         qdrant = _build_qdrant_client()
         session = _open_session()
@@ -104,7 +120,10 @@ def parse_document_task(self: Any, document_id: str) -> dict[str, Any]:
                 file_path=file_path,
                 qdrant=qdrant,
                 session=session,
-                parser=parser,
+                parser_router=lambda p: parse_document_with_router(
+                    p,
+                    visual_router=visual_router,
+                ),
                 embedder=embedder,
                 collection=settings.qdrant_collection,
                 document_id=document_id,
@@ -115,7 +134,7 @@ def parse_document_task(self: Any, document_id: str) -> dict[str, Any]:
                 workspace_id=str(doc.workspace_id),
             )
         finally:
-            parser.close()
+            deepdoc.close()
             embedder.close()
             session.close()
     except (httpx.HTTPError, OSError, RuntimeError) as exc:
