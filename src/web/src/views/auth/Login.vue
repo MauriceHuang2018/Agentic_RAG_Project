@@ -122,6 +122,22 @@ async function onSubmit(): Promise<void> {
   submitting.value = true;
   try {
     await auth.loginWithCredentials(form.username.trim(), form.password);
+    // Populate `auth.permissions` with the real key set the backend
+    // aggregated across the user's workspace bindings. `loginWithCredentials`
+    // already seeded the wildcard for super_admin (so the rbac.guard
+    // short-circuits immediately), but non-super_admin users start with
+    // `[]` — without this call rbac.guard would redirect them to
+    // /forbidden even though the server holds valid role bindings.
+    // Failing here MUST NOT block login for super_admin (their
+    // optimistic seed is already correct). For non-super_admin we
+    // surface a console warning; rbac.guard will then route them to
+    // /forbidden, but a retry of the login flow (or hard refresh)
+    // resolves a transient 5xx.
+    try {
+      await auth.fetchMyPermissions();
+    } catch (permErr) {
+      console.warn('[login] /me/permissions failed; rbac.guard will block perm-gated routes until next login', permErr);
+    }
     // Bootstrap the workspace switcher from the backend. Before
     // `GET /me/workspaces` existed (closed 2026-09-02), the store
     // hard-coded a `00000000-...` placeholder and chat requests
