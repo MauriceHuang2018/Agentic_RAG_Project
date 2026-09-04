@@ -429,7 +429,22 @@ class ChatService:
         ts: TwoStageResult = self.two_stage.two_stage_search(
             query, acl_filter=self._acl_filter
         )
-        if ts.fallback_triggered or not ts.children:
+        # `fallback_triggered` here means two different things depending
+        # on the TwoStageSearcher path:
+        #   * stage-1 produced parents but the top score was below
+        #     `fallback_threshold` — long-document intent switch; the
+        #     caller wants the long-context model, not direct synthesis.
+        #   * stage-1 produced NO parents and the searcher fell back to
+        #     a single-stage search (2026-09-04, when the indexer only
+        #     writes children to Qdrant). In that case `ts.children`
+        #     carries the single-stage hits and we synthesise from them
+        #     directly — falling back to empty here would silently kill
+        #     every short-document query.
+        # So the "no answer" path is only when we have NO children at
+        # all; otherwise we synthesise from whatever the searcher
+        # returned and surface `fallback_triggered` on the outcome so
+        # observability still sees the long-context intent signal.
+        if not ts.children:
             return DirectPathOutcome(
                 answer="",
                 citations=[],
@@ -458,7 +473,10 @@ class ChatService:
         )
         answer = answer[: self.direct_answer_chars]
         return DirectPathOutcome(
-            answer=answer, citations=citations, route="direct"
+            answer=answer,
+            citations=citations,
+            route="direct",
+            fallback_triggered=ts.fallback_triggered,
         )
 
     def _build_direct_prompt(

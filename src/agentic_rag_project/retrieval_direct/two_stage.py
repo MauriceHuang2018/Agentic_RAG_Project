@@ -148,13 +148,30 @@ class TwoStageSearcher:
         )
 
         if not parents:
+            # No parents landed. The two-stage architecture is
+            # optimised for long documents (>=100 pages) where parent
+            # chunks meaningfully scope child retrieval; for shorter
+            # corpora — and for the current indexer that only writes
+            # children to Qdrant — single-stage hybrid search across
+            # all children gives better recall than refusing to
+            # answer. We keep the ACL filter (workspace / owner / ACL
+            # layers) but drop the `is_parent=true` requirement. The
+            # fallback flag is set so downstream stages can choose to
+            # route to a long-context model or just synthesise
+            # directly from the broader hit set.
+            single_stage_hits = self._searcher.hybrid_search(
+                query,
+                top_k=self._child_top_k,
+                qdrant_filter=acl_filter,
+            )
+            top_score = single_stage_hits[0].score if single_stage_hits else 0.0
             return TwoStageResult(
                 parents=[],
-                children=[],
-                fallback_triggered=False,
-                top_score=0.0,
+                children=list(single_stage_hits),
+                fallback_triggered=True,
+                top_score=float(top_score),
                 stage1_query=query,
-                stage2_query="",
+                stage2_query=query,
             )
 
         top_score = parents[0].score

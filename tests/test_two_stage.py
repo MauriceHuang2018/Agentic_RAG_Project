@@ -229,16 +229,65 @@ def test_fallback_not_triggered_when_top1_above_threshold() -> None:
     assert result.fallback_triggered is False
 
 
-def test_no_parents_no_fallback_no_children() -> None:
+def test_no_parents_triggers_single_stage_fallback() -> None:
+    """When stage 1 (is_parent=true) returns no parents, fall back to single-stage.
+
+    Until 2026-09-04 the indexer wrote only children into Qdrant, so
+    any search against an indexed corpus would yield 0 parents →
+    empty answer. The two-stage architecture is designed for long
+    documents (>=100 pages) where parent chunks meaningfully scope
+    child retrieval; for shorter corpora a single-stage hybrid search
+    across all children gives better recall than the parent-anchored
+    path. This test pins that fallback behaviour so future indexer
+    fixes (writing parents) don't silently regress to "always empty".
+
+    Stage 2 of the two-stage path is NOT called — single-stage IS the
+    fallback. The fake's second programmed response is the single-stage
+    result and gets promoted into `result.children`.
+    """
+    single_stage_hits = [
+        _make_result("c1", 0.6, is_parent=False, parent_id=None),
+        _make_result("c2", 0.4, is_parent=False, parent_id=None),
+    ]
+    fake = FakeSearcher(queue=[[], single_stage_hits])
+    s = TwoStageSearcher(fake, parent_top_k=3, child_top_k=10)
+    result = s.two_stage_search("nothing matches parent filter")
+
+    assert result.parents == []
+    assert [r.chunk_id for r in result.children] == ["c1", "c2"]
+    assert result.fallback_triggered is True
+    # top_score reflects the BEST single-stage hit, not zero — that
+    # value feeds downstream fallback policy.
+    assert result.top_score == pytest.approx(0.6)
+    # Stage 2 (is_parent=true) was skipped; only stage 1 + single-stage.
+    assert len(fake.calls) == 2
+    # Stage 1 carries the is_parent filter; single-stage carries ONLY acl.
+    stage1_filter = fake.calls[0]["qdrant_filter"]
+    stage1_keys = {getattr(c, "key", None) for c in (stage1_filter.must or [])}
+    assert PAYLOAD_IS_PARENT in stage1_keys
+    fallback_filter = fake.calls[1]["qdrant_filter"]
+    # When the caller passed no acl_filter, the single-stage fallback
+    # is permitted to send no filter at all — that's still "no
+    # is_parent requirement". When they did pass one, the fallback
+    # must NOT add the is_parent clause on top.
+    if fallback_filter is not None:
+        fallback_keys = {
+            getattr(c, "key", None) for c in (fallback_filter.must or [])
+        }
+        assert PAYLOAD_IS_PARENT not in fallback_keys
+
+
+def test_no_parents_no_fallback_when_single_stage_also_empty() -> None:
+    """Empty corpus (no parents AND no children) → fully empty, fallback still on."""
     fake = FakeSearcher(queue=[[], []])
     s = TwoStageSearcher(fake)
-    result = s.two_stage_search("nothing matches")
+    result = s.two_stage_search("nothing matches anything")
     assert result.parents == []
     assert result.children == []
-    assert result.fallback_triggered is False
+    # Fallback IS triggered because we attempted single-stage; just no hits.
+    assert result.fallback_triggered is True
     assert result.top_score == 0.0
-    # Stage 2 must NOT be called when stage 1 returned nothing.
-    assert len(fake.calls) == 1
+    assert len(fake.calls) == 2
 
 
 # ---------------------------------------------------------------------------
