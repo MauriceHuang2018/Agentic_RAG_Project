@@ -880,6 +880,139 @@ def test_default_llm_synthesizer_records_tokens(
 
 
 # ---------------------------------------------------------------------------
+# M3.x synthesizer hang resilience — see
+# docs/m3_x_synthesizer_hang_resilience/SPEC_synthesizer-hang-resilience.md
+# ---------------------------------------------------------------------------
+
+
+def test_completion_with_metrics_retries_once_on_timeout_then_succeeds(
+    metrics: MetricsRegistry, monkeypatch
+) -> None:
+    """First attempt raises `litellm.exceptions.Timeout`, second succeeds.
+
+    The retry path must:
+      * call `litellm.completion` exactly twice
+      * return the second response (NOT the Timeout)
+      * record token usage exactly once (only the successful attempt)
+      * keep the inter-attempt sleep bounded — we patch the module-level
+        constant `_RETRY_SLEEP_SECONDS` to 0 so the suite stays fast
+        even on the retry path. If the constant doesn't exist yet the
+        test fails with AttributeError, which is the intended TDD signal.
+    """
+    import sys
+    import types
+
+    import litellm  # type: ignore[import-not-found]  # for the real Timeout class
+
+    from agentic_rag_project.observability import llm_metrics
+
+    # Zero out the inter-attempt sleep so retries don't slow the suite.
+    # TDD: this attribute MUST be added by the implementation. If it's
+    # missing the test fails loudly with AttributeError instead of
+    # silently sleeping 1.5s.
+    monkeypatch.setattr(llm_metrics, "_RETRY_SLEEP_SECONDS", 0)
+
+    call_count = {"n": 0}
+
+    def fake_completion(*, model, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # First attempt — simulate upstream hang that the proxy
+            # surfaces as `litellm.exceptions.Timeout`.
+            raise litellm.exceptions.Timeout(
+                message="fake upstream hang",
+                model=model,
+                llm_provider="dashscope",
+            )
+        # Second attempt — succeeds.
+        return _StubResponse(content="recovered", prompt=4, completion=6)
+
+    fake_module = types.ModuleType("litellm")
+    fake_module.completion = fake_completion  # type: ignore[attr]
+    # Mirror the real `litellm.exceptions` submodule so the production
+    # `except litellm.exceptions.Timeout` clause can resolve the symbol
+    # against our fake module.
+    fake_exceptions = types.ModuleType("litellm.exceptions")
+    fake_exceptions.Timeout = litellm.exceptions.Timeout  # type: ignore[attr]
+    fake_module.exceptions = fake_exceptions  # type: ignore[attr]
+    monkeypatch.setitem(sys.modules, "litellm", fake_module)
+    monkeypatch.setitem(sys.modules, "litellm.exceptions", fake_exceptions)
+
+    response = llm_metrics.completion_with_metrics(
+        model="openai/qwen3.7-plus",
+        messages=[{"role": "user", "content": "what is platform analytics?"}],
+        timeout=20.0,
+    )
+    assert call_count["n"] == 2, "should attempt exactly twice (1 initial + 1 retry)"
+    assert response["choices"][0]["message"]["content"] == "recovered"
+    # Token usage recorded exactly once — only the successful attempt
+    # contributes; the timed-out attempt has no `usage` field.
+    assert (
+        metrics.chat_tokens_total.labels(
+            model="openai/qwen3.7-plus", direction="in"
+        )._value.get()
+        == 4
+    )
+    assert (
+        metrics.chat_tokens_total.labels(
+            model="openai/qwen3.7-plus", direction="out"
+        )._value.get()
+        == 6
+    )
+
+
+def test_completion_with_metrics_propagates_timeout_after_one_retry(
+    metrics: MetricsRegistry, monkeypatch
+) -> None:
+    """Both attempts raise `litellm.exceptions.Timeout`.
+
+    The retry path must:
+      * call `litellm.completion` exactly twice (1 retry, not infinite)
+      * re-raise the second Timeout — NO silent fallback
+      * record NO tokens (both attempts failed before any usage data)
+    """
+    import sys
+    import types
+
+    import litellm  # type: ignore[import-not-found]  # for the real Timeout class
+
+    from agentic_rag_project.observability import llm_metrics
+
+    monkeypatch.setattr(llm_metrics, "_RETRY_SLEEP_SECONDS", 0)
+
+    call_count = {"n": 0}
+
+    def fake_completion(*, model, **kwargs):
+        call_count["n"] += 1
+        raise litellm.exceptions.Timeout(
+            message=f"fake upstream hang attempt {call_count['n']}",
+            model=model,
+            llm_provider="dashscope",
+        )
+
+    fake_module = types.ModuleType("litellm")
+    fake_module.completion = fake_completion  # type: ignore[attr]
+    fake_exceptions = types.ModuleType("litellm.exceptions")
+    fake_exceptions.Timeout = litellm.exceptions.Timeout  # type: ignore[attr]
+    fake_module.exceptions = fake_exceptions  # type: ignore[attr]
+    monkeypatch.setitem(sys.modules, "litellm", fake_module)
+    monkeypatch.setitem(sys.modules, "litellm.exceptions", fake_exceptions)
+
+    with __import__("pytest").raises(litellm.exceptions.Timeout):
+        llm_metrics.completion_with_metrics(
+            model="openai/qwen3.7-plus",
+            messages=[{"role": "user", "content": "what is platform analytics?"}],
+            timeout=20.0,
+        )
+    assert call_count["n"] == 2, "must stop after exactly 1 retry (no infinite loop)"
+    # No token recording on the failure path — neither attempt returned usage.
+    assert (
+        "('openai/qwen3.7-plus', 'in')"
+        not in metrics.chat_tokens_total._metrics
+    )
+
+
+# ---------------------------------------------------------------------------
 # T4.3 finalization — bearer token auth for /metrics
 # ---------------------------------------------------------------------------
 

@@ -469,7 +469,11 @@ class ChatService:
                 "provided `[chunk_id]`."
             ),
             user_prompt=prompt,
-            timeout=30.0,
+            # 20s per-attempt × 1 retry = ≤40s wall time on a transient
+            # upstream stall (see completion_with_metrics M3.x resilience,
+            # 2026-09-04). Beats the 8-minute hangs alice's chat saw when
+            # the litellm proxy chained 3 timeouts back-to-back.
+            timeout=20.0,
         )
         answer = answer[: self.direct_answer_chars]
         return DirectPathOutcome(

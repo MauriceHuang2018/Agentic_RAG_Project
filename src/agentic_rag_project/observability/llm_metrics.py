@@ -20,6 +20,18 @@ Why a wrapper instead of recording tokens inline? Three reasons:
   3. If we later swap LiteLLM for a different gateway, only this one
      file changes.
 
+Resilience (M3.x synthesizer hang, 2026-09-04):
+`completion_with_metrics` retries **once** on
+`litellm.exceptions.Timeout` (the exception the litellm proxy raises
+when an upstream attempt times out — verified during the alice-chat
+8-minute-hang investigation). A single retry covers the common case
+of a transient upstream stall (the next attempt usually lands on a
+healthy connection in <1s) without masking genuine capacity problems
+(we still propagate the second Timeout, which FastAPI's global
+handler maps to a fast 500). Non-timeout exceptions (`BadRequestError`,
+`PermissionDeniedError`, etc.) bypass the retry path entirely so
+deterministic failures stay loud.
+
 Failures are non-fatal: if a provider omits `usage`, the wrapper
 silently records nothing — better than raising on the request hot path.
 """
@@ -27,11 +39,17 @@ silently records nothing — better than raising on the request hot path.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from agentic_rag_project.observability.chat_metrics import add_chat_tokens
 
 logger = logging.getLogger(__name__)
+
+
+# Module-level so tests can monkeypatch it to 0 and keep the suite
+# fast. Production reads the constant directly inside the retry loop.
+_RETRY_SLEEP_SECONDS: float = 1.5
 
 
 def _extract_usage(response: Any) -> tuple[int, int]:
@@ -86,10 +104,22 @@ def completion_with_metrics(model: str, **kwargs: Any) -> Any:
 
     `litellm` is imported lazily inside the function. Tests can patch
     it via `monkeypatch.setitem(sys.modules, "litellm", fake)`.
+
+    Resilience: retries once on `litellm.exceptions.Timeout` after
+    sleeping `_RETRY_SLEEP_SECONDS`. Non-timeout exceptions propagate
+    immediately so deterministic failures stay loud. See module
+    docstring for the M3.x rationale.
     """
     import litellm  # type: ignore[import-not-found]
 
-    response = litellm.completion(model=model, **kwargs)
+    try:
+        response = litellm.completion(model=model, **kwargs)
+    except litellm.exceptions.Timeout:
+        logger.warning(
+            "llm completion timed out; retrying once (model=%s)", model
+        )
+        time.sleep(_RETRY_SLEEP_SECONDS)
+        response = litellm.completion(model=model, **kwargs)
     record_completion_tokens(model=model, response=response)
     return response
 
