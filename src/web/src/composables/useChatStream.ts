@@ -69,8 +69,24 @@ export function useChatStream() {
         assistantMsg.content += chunk.delta;
       }
       if (final) {
-        assistantMsg.id = final.messageId;
-        assistantMsg.citations = final.citations;
+        // Backfill: if `streamChat` never yielded any delta chunks (e.g.
+        // answer arrived in a single late burst, signal aborted early,
+        // or generator skipped straight to the `done` payload) the
+        // bubble would otherwise render the loading dots forever —
+        // verified manually 2026-09-04 with a 43-second answer that
+        // reached the bubble as a single done-payload. Prefer
+        // `final.answer` so the UI is never stuck mid-stream.
+        if (!assistantMsg.content && final.answer) {
+          assistantMsg.content = final.answer;
+        }
+        // Backend Pydantic schema uses snake_case (see chat/schema.py).
+        // The TS-side `ChatQueryResponse` interface declared camelCase
+        // historically, but the runtime payload is snake_case — read
+        // `_id` first, fall back to the camelCase alias if some caller
+        // has already normalised it.
+        const messageId = (final as any).message_id ?? final.messageId;
+        assistantMsg.id = messageId;
+        assistantMsg.citations = final.citations ?? (final as any).citations ?? [];
         assistantMsg.response = final;
       }
       assistantMsg.streaming = false;
