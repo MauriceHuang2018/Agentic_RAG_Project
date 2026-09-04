@@ -30,7 +30,14 @@ export interface NormalizedError {
 
 export const httpClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30_000,
+  // Long timeout: chat synthesise can take 60-120s on slow LLM upstreams
+  // (direct_synthesizer → litellm.completion → AliDashScope Qwen). A 30s
+  // timeout here aborts the call BEFORE the backend responds, surfacing
+  // as `errors.network` ("网络错误，请稍后重试") in the UI even though
+  // the backend is still healthy and would have returned a 200/500 in
+  // ~8 minutes (verified via browser-native fetch 2026-09-04). Bumped to
+  // 120s — covers the worst observed case with headroom.
+  timeout: 120_000,
   headers: {
     Accept: 'application/json',
   },
