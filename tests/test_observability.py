@@ -1077,6 +1077,73 @@ def test_completion_with_metrics_emits_one_retry_log_per_attempt(
     )
 
 
+def test_completion_with_metrics_defaults_num_retries_to_zero(
+    metrics: MetricsRegistry, monkeypatch
+) -> None:
+    """`completion_with_metrics` must inject `num_retries=0` AND
+    `max_retries=0` into the `litellm.completion` kwargs when the
+    caller doesn't pass either.
+
+    Why: litellm's own default is `num_retries=3` AND the openai
+    SDK underneath has `max_retries=2`. Two retry layers stacked
+    on top of ours turn a `timeout=20` budget into ~120s
+    `(3 + 2 + 1) × 20 = 120s` — verified empirically 2026-09-05:
+    against a 60s-hang stub, no-kwargs-cap → 144s, num_retries=0
+    only → 69s, num_retries=0 + max_retries=0 → 19.83s. By
+    force-defaulting both we own retry control via the for-loop
+    and keep the budget at `2 × 20 + 1.5 ≈ 41.5s`.
+
+    The wrapper MUST still respect a caller-passed `num_retries=N`
+    or `max_retries=N` — a future classifier override might want
+    litellm-internal retries, and silently overriding them would
+    break that path.
+    """
+    import sys
+    import types
+
+    from agentic_rag_project.observability import llm_metrics
+
+    captured_kwargs: dict = {}
+
+    def fake_completion(*, model, **kwargs):
+        captured_kwargs.update(kwargs)
+        return _StubResponse(content="ok", prompt=1, completion=1)
+
+    fake_module = types.ModuleType("litellm")
+    fake_module.completion = fake_completion  # type: ignore[attr]
+    monkeypatch.setitem(sys.modules, "litellm", fake_module)
+
+    # Case 1: caller doesn't pass either → wrapper injects both as 0.
+    llm_metrics.completion_with_metrics(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": "hi"}],
+        timeout=20.0,
+    )
+    assert captured_kwargs["num_retries"] == 0, (
+        "wrapper must default num_retries=0 so litellm-internal retries "
+        f"don't stack on top of ours; got {captured_kwargs.get('num_retries')!r}"
+    )
+    assert captured_kwargs["max_retries"] == 0, (
+        "wrapper must default max_retries=0 so openai-sdk's built-in "
+        f"retries don't stack on top of ours; got {captured_kwargs.get('max_retries')!r}"
+    )
+
+    # Case 2: caller passes num_retries=N → wrapper must NOT override it.
+    captured_kwargs.clear()
+    llm_metrics.completion_with_metrics(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": "hi"}],
+        timeout=20.0,
+        num_retries=2,
+    )
+    assert captured_kwargs["num_retries"] == 2, (
+        "wrapper must respect an explicit caller-supplied num_retries; "
+        f"got {captured_kwargs.get('num_retries')!r}"
+    )
+    # max_retries stays at our default of 0 since caller didn't override.
+    assert captured_kwargs["max_retries"] == 0
+
+
 # ---------------------------------------------------------------------------
 # T4.3 finalization — bearer token auth for /metrics
 # ---------------------------------------------------------------------------
