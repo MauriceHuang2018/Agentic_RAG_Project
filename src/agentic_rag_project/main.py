@@ -92,6 +92,17 @@ def _build_chat_service() -> ChatService | None:
         # is comfortable for a healthy qwen3.7-plus (~3s measured).
         llm_classifier=LLMClassifier(
             timeout_seconds=settings.router_classifier_timeout_seconds,
+            # Cap classifier output (route JSON is small) and kill the
+            # reasoning trace — both default OFF per Settings. Wire them
+            # unconditionally when the env didn't explicitly re-enable
+            # thinking; that way operators can flip on for debugging by
+            # setting CLASSIFIER_ENABLE_THINKING=true. Step 6 / 2026-09-05.
+            max_tokens=settings.classifier_max_tokens,
+            extra_body=(
+                {"enable_thinking": False}
+                if not settings.classifier_enable_thinking
+                else None
+            ),
         ),
         keyword_classifier=KeywordClassifier(),
     )
