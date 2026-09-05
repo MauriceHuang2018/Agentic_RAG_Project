@@ -1012,6 +1012,71 @@ def test_completion_with_metrics_propagates_timeout_after_one_retry(
     )
 
 
+def test_completion_with_metrics_emits_one_retry_log_per_attempt(
+    metrics: MetricsRegistry, monkeypatch
+) -> None:
+    """Each retry attempt emits exactly one `llm completion timed out`
+    warning — proves the second Timeout ALSO enters the except handler
+    (the original try/except nested retry missed this case because a
+    Timeout raised inside an `except` block is NOT re-caught by the
+    same `except`).
+
+    Asserts `retry_log_count == 1` for the two-attempt-fail scenario:
+    first attempt → log, second attempt → propagate (no log because
+    `is_last` short-circuits before `logger.warning`).
+    """
+    import logging
+    import sys
+    import types
+
+    import litellm  # type: ignore[import-not-found]
+
+    from agentic_rag_project.observability import llm_metrics
+
+    monkeypatch.setattr(llm_metrics, "_RETRY_SLEEP_SECONDS", 0)
+
+    def fake_completion(*, model, **kwargs):
+        raise litellm.exceptions.Timeout(
+            message="hang", model=model, llm_provider="dashscope"
+        )
+
+    fake_module = types.ModuleType("litellm")
+    fake_module.completion = fake_completion  # type: ignore[attr]
+    fake_exceptions = types.ModuleType("litellm.exceptions")
+    fake_exceptions.Timeout = litellm.exceptions.Timeout  # type: ignore[attr]
+    fake_module.exceptions = fake_exceptions  # type: ignore[attr]
+    monkeypatch.setitem(sys.modules, "litellm", fake_module)
+    monkeypatch.setitem(sys.modules, "litellm.exceptions", fake_exceptions)
+
+    log_records: list[str] = []
+
+    class _CaptureHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            log_records.append(record.getMessage())
+
+    handler = _CaptureHandler(level=logging.WARNING)
+    llm_metrics.logger.addHandler(handler)
+    try:
+        with __import__("pytest").raises(litellm.exceptions.Timeout):
+            llm_metrics.completion_with_metrics(
+                model="openai/qwen3.7-plus",
+                messages=[{"role": "user", "content": "hi"}],
+                timeout=20.0,
+            )
+    finally:
+        llm_metrics.logger.removeHandler(handler)
+
+    retry_logs = [
+        msg for msg in log_records
+        if "llm completion timed out" in msg
+    ]
+    assert len(retry_logs) == 1, (
+        "expected exactly one retry warning (1 attempt + 1 retry = 2 attempts, "
+        "warning logged once for the non-last attempt); "
+        f"got log records: {log_records}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # T4.3 finalization — bearer token auth for /metrics
 # ---------------------------------------------------------------------------

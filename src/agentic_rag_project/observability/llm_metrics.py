@@ -50,6 +50,8 @@ logger = logging.getLogger(__name__)
 # Module-level so tests can monkeypatch it to 0 and keep the suite
 # fast. Production reads the constant directly inside the retry loop.
 _RETRY_SLEEP_SECONDS: float = 1.5
+# Total number of attempts (initial + retries). 2 = one retry.
+_MAX_ATTEMPTS: int = 2
 
 
 def _extract_usage(response: Any) -> tuple[int, int]:
@@ -109,17 +111,30 @@ def completion_with_metrics(model: str, **kwargs: Any) -> Any:
     sleeping `_RETRY_SLEEP_SECONDS`. Non-timeout exceptions propagate
     immediately so deterministic failures stay loud. See module
     docstring for the M3.x rationale.
+
+    Implementation note: we use a bounded `for` loop over `_MAX_ATTEMPTS`
+    rather than nesting a second `try` inside `except` because a second
+    Timeout inside the except handler would NOT be re-caught by the
+    same `except` clause — Python's try/except only guards the suite
+    under the matching `try`, not whatever runs inside its `except`
+    block. The loop captures every attempt under the same except
+    handler uniformly.
     """
     import litellm  # type: ignore[import-not-found]
 
-    try:
-        response = litellm.completion(model=model, **kwargs)
-    except litellm.exceptions.Timeout:
-        logger.warning(
-            "llm completion timed out; retrying once (model=%s)", model
-        )
-        time.sleep(_RETRY_SLEEP_SECONDS)
-        response = litellm.completion(model=model, **kwargs)
+    response: Any = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            response = litellm.completion(model=model, **kwargs)
+            break
+        except litellm.exceptions.Timeout:
+            is_last = attempt == _MAX_ATTEMPTS - 1
+            if is_last:
+                raise
+            logger.warning(
+                "llm completion timed out; retrying once (model=%s)", model
+            )
+            time.sleep(_RETRY_SLEEP_SECONDS)
     record_completion_tokens(model=model, response=response)
     return response
 
