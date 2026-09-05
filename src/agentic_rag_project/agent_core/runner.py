@@ -91,14 +91,22 @@ def default_agent_llm_call(
     / reflect / rewrite nodes extract JSON with the tolerant
     `_extract_json` helper.
 
-    Extra kwargs (`max_tokens`, `extra_body`, ...) flow through to
-    `completion_with_metrics` unchanged. Each agent node (plan /
-    reflect / rewrite / synthesize) currently passes none — caller-
-    specific knobs land in Step 7 (read Settings.agent_synth_*).
+    Per-call kwargs (`max_tokens`, `extra_body`, ...) win over
+    `Settings.agent_synth_*` so future per-node overrides (plan vs
+    synth) can be wired by passing kwargs from `nodes.py` without
+    changing this function. When the caller passes nothing, we read
+    `Settings.agent_synth_*` defaults: thinking ON (multi-hop benefits
+    from reasoning) + max_tokens=1024 (cap answer length).
+
+    See Step 7 / 2026-09-05 (chat synth latency optimization).
     """
     from agentic_rag_project.config import get_settings
 
     settings = get_settings()
+    if "max_tokens" not in kwargs and settings.agent_synth_max_tokens:
+        kwargs["max_tokens"] = settings.agent_synth_max_tokens
+    if "extra_body" not in kwargs and not settings.agent_synth_enable_thinking:
+        kwargs["extra_body"] = {"enable_thinking": False}
     response = completion_with_metrics(
         model=settings.litellm_model,
         api_base=settings.litellm_base_url or None,
