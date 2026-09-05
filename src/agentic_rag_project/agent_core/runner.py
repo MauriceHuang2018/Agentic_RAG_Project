@@ -82,7 +82,7 @@ class RetrievalBackend(Protocol):
 # Default factory for the LLM call. Imported lazily so the module can be
 # imported without forcing litellm to load at import time.
 def default_agent_llm_call(
-    system_prompt: str, user_prompt: str, timeout: float
+    system_prompt: str, user_prompt: str, timeout: float, **kwargs: Any
 ) -> str:
     """Production LLM call via litellm.
 
@@ -90,6 +90,11 @@ def default_agent_llm_call(
     the synthesize node is allowed to return free-form text; the plan
     / reflect / rewrite nodes extract JSON with the tolerant
     `_extract_json` helper.
+
+    Extra kwargs (`max_tokens`, `extra_body`, ...) flow through to
+    `completion_with_metrics` unchanged. Each agent node (plan /
+    reflect / rewrite / synthesize) currently passes none — caller-
+    specific knobs land in Step 7 (read Settings.agent_synth_*).
     """
     from agentic_rag_project.config import get_settings
 
@@ -103,6 +108,7 @@ def default_agent_llm_call(
             {"role": "user", "content": user_prompt},
         ],
         timeout=timeout,
+        **kwargs,
     )
     return response["choices"][0]["message"]["content"] or ""
 
