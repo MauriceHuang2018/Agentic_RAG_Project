@@ -469,11 +469,15 @@ class ChatService:
                 "provided `[chunk_id]`."
             ),
             user_prompt=prompt,
-            # 20s per-attempt × 1 retry = ≤40s wall time on a transient
-            # upstream stall (see completion_with_metrics M3.x resilience,
-            # 2026-09-04). Beats the 8-minute hangs alice's chat saw when
-            # the litellm proxy chained 3 timeouts back-to-back.
-            timeout=20.0,
+            # 45s per-attempt budget. qwen3.7-plus is a reasoning model whose
+            # thinking trace on a real RAG prompt (≈4.6KB context, top-5 chunks)
+            # measured 34.7s end-to-end on 2026-09-05 (reasoning_tokens=3077,
+            # completion_tokens=1994). The prior 20s budget cut every real
+            # direct-path synthesis off mid-generation → litellm.Timeout → 500.
+            # 45s covers the observed 35s with ~10s headroom; the single retry
+            # in completion_with_metrics is reserved for genuine transient
+            # stalls, not normal generation time.
+            timeout=45.0,
         )
         answer = answer[: self.direct_answer_chars]
         return DirectPathOutcome(
