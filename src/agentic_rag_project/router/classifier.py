@@ -31,7 +31,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 from agentic_rag_project.observability.llm_metrics import completion_with_metrics
 
@@ -113,13 +113,17 @@ The dict must contain `route` (`'direct'|'agent'`) and `confidence`
 
 
 def default_litellm_call(
-    system_prompt: str, user_prompt: str, timeout: float
+    system_prompt: str, user_prompt: str, timeout: float, **kwargs: Any
 ) -> dict:
     """Default LLM call wired to litellm.completion.
 
     Imports litellm lazily (inside `completion_with_metrics`) so the
     module can be imported by tests that never invoke the router
     (no network round-trip required at import time).
+
+    Extra kwargs (`max_tokens`, `extra_body`, ...) flow through to
+    `completion_with_metrics` unchanged. The caller (`LLMClassifier.classify`)
+    assembles them from `Settings.classifier_*` knobs.
     """
     from agentic_rag_project.config import get_settings
 
@@ -134,6 +138,7 @@ def default_litellm_call(
         ],
         timeout=timeout,
         response_format={"type": "json_object"},
+        **kwargs,
     )
     content = response["choices"][0]["message"]["content"]
     return json.loads(content)
