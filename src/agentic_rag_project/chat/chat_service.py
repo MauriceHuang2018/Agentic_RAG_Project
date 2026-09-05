@@ -462,6 +462,18 @@ class ChatService:
             for h in hits
         ]
         prompt = self._build_direct_prompt(query, hits, history_prompt)
+        # Build per-call knobs from Settings. Direct synth defaults to
+        # thinking OFF — qwen3.7-plus is a reasoning model and the
+        # 3077 reasoning_tokens on a real RAG prompt are pure waste
+        # for a direct lookup. See Step 4 / 2026-09-05.
+        from agentic_rag_project.config import get_settings
+
+        settings = get_settings()
+        synth_opts: dict = {}
+        if settings.direct_synth_max_tokens:
+            synth_opts["max_tokens"] = settings.direct_synth_max_tokens
+        if not settings.direct_synth_enable_thinking:
+            synth_opts["extra_body"] = {"enable_thinking": False}
         answer = self.direct_synthesizer.synthesize(
             system_prompt=(
                 "You are an answer synthesizer for a corporate RAG system. "
@@ -478,6 +490,7 @@ class ChatService:
             # in completion_with_metrics is reserved for genuine transient
             # stalls, not normal generation time.
             timeout=45.0,
+            **synth_opts,
         )
         answer = answer[: self.direct_answer_chars]
         return DirectPathOutcome(

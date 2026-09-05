@@ -124,8 +124,9 @@ class StubDirectSynth:
     answer: str = "direct-answer"
     calls: int = 0
 
-    def synthesize(self, *, system_prompt, user_prompt, timeout):
+    def synthesize(self, *, system_prompt, user_prompt, timeout, **kwargs):
         self.calls += 1
+        self.last_kwargs = kwargs
         return self.answer
 
 
