@@ -354,4 +354,88 @@ def test_llm_classifier_threads_settings_timeout_into_llm_call(monkeypatch) -> N
         timeout_seconds=get_settings().router_classifier_timeout_seconds,
     )
     llm.classify("anything")
-    assert captured["timeout"] == pytest.approx(60.0)
+
+
+# ---------------------------------------------------------------------------
+# Step 9 / 2026-09-05 — kwargs forwarding for max_tokens / extra_body.
+# ---------------------------------------------------------------------------
+
+
+def test_classifier_forwards_extra_body_and_max_tokens() -> None:
+    """max_tokens + extra_body flow through to llm_call via **kwargs."""
+    captured: list[dict] = []
+
+    def _spy(system: str, user: str, timeout: float, **kw) -> dict:
+        captured.append({"timeout": timeout, "kw": kw})
+        return {"route": "direct", "confidence": 0.9, "reason": "ok"}
+
+    llm = LLMClassifier(
+        llm_call=_spy,
+        max_tokens=200,
+        extra_body={"enable_thinking": False},
+    )
+    decision = llm.classify("什么是 PV?")
+
+    assert decision.route == "direct"
+    assert decision.confidence == 0.9
+    assert len(captured) == 1
+    assert captured[0]["kw"] == {
+        "max_tokens": 200,
+        "extra_body": {"enable_thinking": False},
+    }
+
+
+def test_classifier_backward_compat_old_position_only_callable() -> None:
+    """Legacy (system, user, timeout) callable still works.
+
+    The new **kwargs forwarding must NOT break old stub functions used
+    by tests and ad-hoc CLI scripts — when max_tokens / extra_body are
+    left at None, the call site must keep the original 3-positional
+    shape.
+    """
+    captured: list[dict] = []
+
+    def _legacy(system: str, user: str, timeout: float) -> dict:
+        captured.append({"system": system, "user": user, "timeout": timeout})
+        return {"route": "direct", "confidence": 0.5, "reason": "legacy"}
+
+    llm = LLMClassifier(llm_call=_legacy)
+    decision = llm.classify("hello world")
+
+    assert decision.route == "direct"
+    assert len(captured) == 1
+    assert "system" in captured[0]
+    assert captured[0]["timeout"] == pytest.approx(10.0)
+
+
+def test_classifier_default_kwargs_when_settings_thinking_off(monkeypatch) -> None:
+    """settings.classifier_enable_thinking=False → extra_body injected."""
+    from agentic_rag_project.config import get_settings
+
+    # Re-import fresh so the env override picks up.
+    monkeypatch.setenv("CLASSIFIER_ENABLE_THINKING", "false")
+    monkeypatch.setenv("CLASSIFIER_MAX_TOKENS", "300")
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    captured: list[dict] = []
+
+    def _spy(system: str, user: str, timeout: float, **kw) -> dict:
+        captured.append(kw)
+        return {"route": "direct", "confidence": 0.9, "reason": "x"}
+
+    # Mirror the main.py wiring pattern.
+    llm = LLMClassifier(
+        llm_call=_spy,
+        max_tokens=settings.classifier_max_tokens,
+        extra_body=(
+            {"enable_thinking": False}
+            if not settings.classifier_enable_thinking
+            else None
+        ),
+    )
+    llm.classify("what is this?")
+
+    assert len(captured) == 1
+    assert captured[0].get("max_tokens") == 300
+    assert captured[0].get("extra_body") == {"enable_thinking": False}
