@@ -32,23 +32,31 @@ export function useChatStream() {
     abortController?.abort();
     abortController = new AbortController();
 
-    const userMsg: ChatMessage = {
+    // IMPORTANT (2026-09-06): wrap both messages with `reactive(...)` so the
+    // closure reference IS the reactive proxy. `messages.push(plainObj)`
+    // stores the raw object as-is (Vue's `push` instrumentation calls
+    // `toRaw(self).push` directly — see @vue/reactivity arrayInstrumentations),
+    // so the only way the closure's later mutations (`assistantMsg.content +=`
+    // and the `streaming = false` / id / citations assignments) propagate to
+    // the template is to make the closure object itself the proxy. Without
+    // this, the chat bubble shows "..." forever with a 200 OK response.
+    const userMsg = reactive<ChatMessage>({
       id: `user-${Date.now()}`,
       role: 'user',
       content: query,
       citations: [],
       timestamp: Date.now(),
-    };
+    });
     messages.push(userMsg);
 
-    const assistantMsg: ChatMessage = {
+    const assistantMsg = reactive<ChatMessage>({
       id: `assistant-${Date.now()}`,
       role: 'assistant',
       content: '',
       citations: [],
       timestamp: Date.now(),
       streaming: true,
-    };
+    });
     messages.push(assistantMsg);
 
     isStreaming.value = true;
