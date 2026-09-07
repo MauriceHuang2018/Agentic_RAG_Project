@@ -3918,19 +3918,64 @@
     try { localStorage.setItem("docgpt.theme.resolved", theme); } catch (_) { /* ignore */ }
   }
 
-  /** v2.1 Theme: topbar toggle button — flips between light/dark and syncs state.preferences.theme.
-   *  Skips "system" once a user has explicitly chosen; only the toggle controls it thereafter.
-   *  Re-applying the same theme is a no-op. */
+  /** v2.1 Theme: topbar dropdown — 3 options (light / dark / system).
+   *  Click button toggles menu visibility; click an option sets preference, closes menu,
+   *  syncs the Profile page select, persists to localStorage. Outside-click + Escape close. */
   function bindThemeToggle() {
-    const btn = document.getElementById("themeToggle");
-    if (!btn) return;
-    btn.addEventListener("click", () => {
-      const next = resolveThemePreference() === "dark" ? "light" : "dark";
-      applyTheme(next);
-      if (state.preferences) state.preferences.theme = next;
-      const prefSelect = document.getElementById("prefTheme");
-      if (prefSelect) prefSelect.value = next;
-      try { localStorage.setItem("docgpt.theme.user", next); } catch (_) { /* ignore */ }
+    const wrap = document.getElementById("themeToggleWrap");
+    const btn = document.getElementById("themeToggleBtn");
+    const menu = document.getElementById("themeToggleMenu");
+    if (!wrap || !btn || !menu) return;
+
+    const setActiveMarker = () => {
+      const pref = (state.preferences && state.preferences.theme) || "light";
+      menu.querySelectorAll("li[data-theme-value]").forEach((li) => {
+        li.classList.toggle("is-active", li.dataset.themeValue === pref);
+        li.setAttribute("aria-selected", li.dataset.themeValue === pref ? "true" : "false");
+      });
+    };
+
+    const openMenu = () => {
+      menu.hidden = false;
+      btn.setAttribute("aria-expanded", "true");
+      setActiveMarker();
+    };
+    const closeMenu = () => {
+      menu.hidden = true;
+      btn.setAttribute("aria-expanded", "false");
+    };
+
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (menu.hidden) openMenu(); else closeMenu();
+    });
+
+    menu.querySelectorAll("li[data-theme-value]").forEach((li) => {
+      li.addEventListener("click", () => {
+        const value = li.dataset.themeValue; // "light" | "dark" | "system"
+        if (state.preferences) state.preferences.theme = value;
+        applyTheme(resolveThemePreference());
+        try { localStorage.setItem("docgpt.theme.user", value); } catch (_) { /* ignore */ }
+        const prefSelect = document.getElementById("prefTheme");
+        if (prefSelect) prefSelect.value = value;
+        closeMenu();
+      });
+    });
+
+    // Outside click closes
+    document.addEventListener("click", (e) => {
+      if (menu.hidden) return;
+      if (!wrap.contains(e.target)) closeMenu();
+    });
+    // Escape closes
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !menu.hidden) { closeMenu(); btn.focus(); }
+    });
+
+    // Keep the ✓ marker in sync if preferences change elsewhere (e.g. Profile page save)
+    setActiveMarker();
+    document.addEventListener("change", (e) => {
+      if (e.target && e.target.id === "prefTheme") setActiveMarker();
     });
   }
 
