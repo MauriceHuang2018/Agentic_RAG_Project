@@ -31,6 +31,21 @@
           <span class="status-pill__dot" aria-hidden="true"></span>
           <span>本地服务 · 在线</span>
         </span>
+        <button
+          class="theme-toggle"
+          id="themeToggle"
+          type="button"
+          aria-label="切换深色主题"
+          title="切换深色主题"
+        >
+          <svg class="theme-toggle__icon theme-toggle__icon--sun" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+          </svg>
+          <svg class="theme-toggle__icon theme-toggle__icon--moon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+          </svg>
+        </button>
         <span class="topbar__meta" id="topbarMeta">Acme Corp · 总公司</span>
       </div>
     </div>
@@ -290,7 +305,7 @@
           <div class="admin__demo-banner" id="adminDemoBanner" role="note">
             <span class="admin__demo-banner-icon" aria-hidden="true">⚠</span>
             <span class="admin__demo-banner-text">
-              <strong>演示模式</strong>· 当前看到的所有数据均为静态 mock，无后端鉴权；生产环境中 Page 15 敏感信息维护仅 <code>system_admin</code> 可见，Page 4-14 按 RBAC 权限点收敛
+              生产环境中"敏感信息维护"仅 <code>system_admin</code> 可见，个人中心按 RBAC 权限点收敛
             </span>
             <button class="admin__demo-banner-close" id="adminDemoBannerClose" type="button" aria-label="关闭演示 banner">×</button>
           </div>

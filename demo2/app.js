@@ -3887,11 +3887,51 @@
     renderWorkspaceMenu();
     renderHistory();
     renderChat();
+    // v2.1: apply saved theme (light / dark / system) to <html> before first paint
+    applyTheme(resolveThemePreference());
+    bindThemeToggle();
     // v2.0 P1: restore remembered session, otherwise show login
     const restored = restoreRememberedLogin();
     setView(restored ? "chat" : "login");
     // Update sidebar user-card with current user (if any)
     refreshUserCard();
+  }
+
+  /** v2.1 Theme: resolve preference string to concrete theme ("light" | "dark").
+   *  Prefers "system" → match OS prefers-color-scheme. Fallback: light. */
+  function resolveThemePreference() {
+    const pref = (state.preferences && state.preferences.theme) || "light";
+    if (pref === "system") {
+      const mql = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+      return mql && mql.matches ? "dark" : "light";
+    }
+    return pref === "dark" ? "dark" : "light";
+  }
+
+  /** v2.1 Theme: set <html data-theme="..."> and persist resolved value in localStorage
+   *  so reload stays consistent. Does not mutate the user-visible preference (still "system"
+   *  resolves to dark on a dark OS, light on a light OS). */
+  function applyTheme(theme) {
+    const root = document.documentElement;
+    if (theme === "dark") root.setAttribute("data-theme", "dark");
+    else root.removeAttribute("data-theme");
+    try { localStorage.setItem("docgpt.theme.resolved", theme); } catch (_) { /* ignore */ }
+  }
+
+  /** v2.1 Theme: topbar toggle button — flips between light/dark and syncs state.preferences.theme.
+   *  Skips "system" once a user has explicitly chosen; only the toggle controls it thereafter.
+   *  Re-applying the same theme is a no-op. */
+  function bindThemeToggle() {
+    const btn = document.getElementById("themeToggle");
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+      const next = resolveThemePreference() === "dark" ? "light" : "dark";
+      applyTheme(next);
+      if (state.preferences) state.preferences.theme = next;
+      const prefSelect = document.getElementById("prefTheme");
+      if (prefSelect) prefSelect.value = next;
+      try { localStorage.setItem("docgpt.theme.user", next); } catch (_) { /* ignore */ }
+    });
   }
 
   /** v2.0 P1: refresh sidebar user-card display from state.currentUser. Lifted to outer scope so
