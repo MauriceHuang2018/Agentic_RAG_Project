@@ -3890,11 +3890,25 @@
     // v2.1: apply saved theme (light / dark / system) to <html> before first paint
     applyTheme(resolveThemePreference());
     bindThemeToggle();
+    bindLogoutButton();
     // v2.0 P1: restore remembered session, otherwise show login
     const restored = restoreRememberedLogin();
     setView(restored ? "chat" : "login");
     // Update sidebar user-card with current user (if any)
     refreshUserCard();
+  }
+
+  /** v2.1: wire #btnLogout sidebar button. The button starts hidden and is
+   *  unhidden by refreshUserCard() once a user logs in. We bind once at init
+   *  (the button is always in the DOM, just `is-hidden` until logged in). */
+  function bindLogoutButton() {
+    const btn = document.getElementById("btnLogout");
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+      const name = state.currentUser && (state.currentUser.display_name || state.currentUser.name);
+      handleLogout();
+      showToast(name ? `已退出 · ${name}` : "已退出", "ok");
+    });
   }
 
   /** v2.1 Theme: resolve preference string to concrete theme ("light" | "dark").
