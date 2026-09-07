@@ -4,62 +4,73 @@
    Source of truth: docs/原型设计/tokens-planA.md (2026-09-01 v1.0)
    ====================================================================== */
 
-/* ---------- Design tokens (light + dark) ---------- */
+/* ---------- Design tokens (light + dark) ----------
+   v2.1 polish (2026-09-07): navy primary + blue CTA, softer radii,
+   3-tier shadow, extended spacing & font scale.
+*/
 :root {
   /* Surface */
-  --bg: #FAFAFA;              /* page background */
+  --bg: #F8FAFC;              /* page background — slate-50 */
   --surface-1: #FFFFFF;       /* cards, dialogs, drawers */
-  --surface-2: #F3F4F6;       /* hover/pressed surface */
-  --surface-overlay: rgba(17, 24, 39, 0.32); /* dialog/drawer backdrop */
+  --surface-2: #F1F5F9;       /* hover/pressed surface — slate-100 */
+  --surface-3: #E8EDF3;    /* zebra row / subtle bg */
+  --surface-overlay: rgba(15, 23, 42, 0.45); /* dialog/drawer backdrop — navy tint */
 
   /* Border */
-  --border: #E5E7EB;          /* 1px hairline, default border */
-  --border-strong: #D1D5DB;   /* emphasized border, hover state */
+  --border: #E2E8F0;          /* 1px hairline, default border — slate-200 */
+  --border-strong: #CBD5E1;   /* emphasized border, hover state — slate-300 */
 
-  /* Text */
-  --text-1: #111827;          /* primary text */
-  --text-2: #4B5563;          /* secondary text */
-  --text-3: #9CA3AF;          /* tertiary, placeholder, label */
+  /* Text — navy-based for cooler tone */
+  --text-1: #0F172A;          /* primary text — slate-900 */
+  --text-2: #475569;          /* secondary text — slate-600 */
+  --text-3: #94A3B8;          /* tertiary, placeholder, label — slate-400 */
   --text-inverse: #FFFFFF;    /* text on accent background */
 
-  /* Accent (single primary blue) */
-  --accent: #2563EB;
-  --accent-strong: #1D4ED8;
-  --accent-soft: #DBEAFE;
+  /* Primary navy + blue CTA (two-tone palette) */
+  --primary: #0F172A;         /* navy — used for strong text, user avatar, surface markers */
+  --primary-soft: #F1F5F9;    /* navy-tinted soft bg */
+  --accent: #0369A1;          /* sky-700 — calmer, more enterprise than #2563EB */
+  --accent-hover: #0284C7;    /* sky-600 — hover state */
+  --accent-strong: #075985;   /* sky-800 — emphasized accent text */
+  --accent-soft: #E0F2FE;     /* sky-100 — soft chip background */
 
   /* Semantic status */
   --ok: #059669;
   --warn: #D97706;
   --err: #DC2626;
-  --info: #3B82F6;
+  --info: #0369A1;            /* align with new accent */
 
-  /* Status-soft backgrounds (replaces warm hex chips) */
-  --ok-bg: rgba(5, 150, 105, 0.08);
-  --ok-border: rgba(5, 150, 105, 0.25);
-  --warn-bg: rgba(217, 119, 6, 0.08);
-  --warn-border: rgba(217, 119, 6, 0.25);
-  --err-bg: rgba(220, 38, 38, 0.08);
-  --err-border: rgba(220, 38, 38, 0.25);
-  --info-bg: rgba(59, 130, 246, 0.08);
-  --info-border: rgba(59, 130, 246, 0.25);
+  /* Status-soft backgrounds (subtle, more refined) */
+  --ok-bg: rgba(5, 150, 105, 0.06);
+  --ok-border: rgba(5, 150, 105, 0.22);
+  --warn-bg: rgba(217, 119, 6, 0.06);
+  --warn-border: rgba(217, 119, 6, 0.22);
+  --err-bg: rgba(220, 38, 38, 0.06);
+  --err-border: rgba(220, 38, 38, 0.22);
+  --info-bg: rgba(3, 105, 161, 0.06);
+  --info-border: rgba(3, 105, 161, 0.22);
 
-  /* Radii (disciplined, no pill) */
-  --r-sm: 6px;                /* buttons, inputs, tags */
-  --r-md: 8px;                /* cards, dialogs */
-  --r-lg: 10px;               /* drawers, popovers */
+  /* Radii — softer, more "耐看" */
+  --r-sm: 8px;                /* buttons, inputs, tags */
+  --r-md: 12px;               /* cards, dialogs */
+  --r-lg: 14px;               /* drawers, popovers */
 
-  /* Spacing scale (4px base) */
+  /* Spacing scale (4px base + extended) */
   --s-1: 4px;
   --s-2: 8px;
   --s-3: 12px;
   --s-4: 16px;
   --s-5: 20px;
   --s-6: 24px;
+  --s-7: 28px;
   --s-8: 32px;
+  --s-9: 36px;
   --s-10: 40px;
   --s-12: 48px;
+  --s-14: 56px;
+  --s-16: 64px;
 
-  /* Type — no serif anywhere */
+  /* Type — Inter system stack (no web fonts) */
   --font-display: "Inter", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   --font-body: "Inter", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, ui-monospace, monospace;
@@ -72,23 +83,30 @@
   --fs-16: 16px;
   --fs-18: 18px;
   --fs-22: 22px;
+  --fs-24: 24px;
   --fs-28: 28px;
+  --fs-30: 30px;
+  --fs-32: 32px;
   --fs-36: 36px;
 
   /* Letter-spacing */
-  --ls-number: -0.03em;   /* 数字（如 tile 主指标）收紧字距 */
+  --ls-number: -0.03em;       /* tabular-nums for big KPI numbers */
+  --ls-display: -0.02em;      /* headings — slightly tightened */
 
-  /* Shadow — only 2 levels, very weak */
-  --shadow-card: 0 1px 3px rgba(17, 24, 39, 0.06);
-  --shadow-popover: 0 8px 24px rgba(17, 24, 39, 0.12);
+  /* Shadow — 3 tiers (subtle → elevated) for layered depth */
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
+  --shadow-popover: 0 4px 8px rgba(15, 23, 42, 0.04), 0 12px 24px rgba(15, 23, 42, 0.08);
+  --shadow-elevated: 0 8px 16px rgba(15, 23, 42, 0.06), 0 24px 48px rgba(15, 23, 42, 0.10);
 
   /* Layout */
-  --topbar-h: 56px;
-  --sidebar-w: 288px;
-  --sidebar-bottom-h: 188px;
+  --topbar-h: 60px;
+  --sidebar-w: 296px;
+  --sidebar-bottom-h: 196px;
 
-  --transition-fast: 120ms ease;
-  --transition-base: 180ms ease;
+  /* Motion — refined cubic-bezier */
+  --transition-fast: 140ms cubic-bezier(0.2, 0, 0, 1);
+  --transition-base: 200ms cubic-bezier(0.2, 0, 0, 1);
+  --transition-slow: 320ms cubic-bezier(0.2, 0, 0, 1);
 
   /* Signature elements (Plan A §7.1) */
   --cite-edge: 3px solid var(--accent);   /* citation / code-block left edge */
@@ -96,34 +114,51 @@
   --hairline: 1px solid var(--border);    /* 1px hairline shorthand */
 }
 
-/* ---------- Dark theme override ---------- */
+/* ---------- Dark theme override ----------
+   v2.1 polish: deeper bg, brighter accent for AAA contrast on dark surface.
+*/
 [data-theme="dark"] {
-  --bg: #0F172A;
-  --surface-1: #1E293B;
-  --surface-2: #334155;
-  --surface-overlay: rgba(0, 0, 0, 0.5);
+  --bg: #0B1220;
+  --surface-1: #111827;
+  --surface-2: #1F2937;
+  --surface-3: #283449;
+  --surface-overlay: rgba(0, 0, 0, 0.65);
 
-  --border: #334155;
-  --border-strong: #475569;
+  --border: #1F2937;
+  --border-strong: #334155;
 
-  --text-1: #F1F5F9;
+  --text-1: #F8FAFC;
   --text-2: #CBD5E1;
   --text-3: #64748B;
   --text-inverse: #0F172A;
 
-  --accent: #2563EB;
-  --accent-strong: #3B82F6;
-  --accent-soft: #1E3A8A;
+  --primary: #F8FAFC;
+  --primary-soft: #1E293B;
+  --accent: #38BDF8;
+  --accent-hover: #7DD3FC;
+  --accent-strong: #0EA5E9;
+  --accent-soft: #082F49;
 
-  --ok: #059669;
-  --warn: #D97706;
-  --err: #DC2626;
-  --info: #3B82F6;
+  --ok: #10B981;
+  --warn: #FBBF24;
+  --err: #F87171;
+  --info: #38BDF8;
 
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --ok-bg: rgba(16, 185, 129, 0.10);
+  --ok-border: rgba(16, 185, 129, 0.25);
+  --warn-bg: rgba(251, 191, 36, 0.10);
+  --warn-border: rgba(251, 191, 36, 0.25);
+  --err-bg: rgba(248, 113, 113, 0.10);
+  --err-border: rgba(248, 113, 113, 0.25);
+  --info-bg: rgba(56, 189, 248, 0.10);
+  --info-border: rgba(56, 189, 248, 0.25);
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-popover: 0 4px 8px rgba(0, 0, 0, 0.4), 0 12px 24px rgba(0, 0, 0, 0.5);
+  --shadow-elevated: 0 8px 16px rgba(0, 0, 0, 0.5), 0 24px 48px rgba(0, 0, 0, 0.6);
 
   --ls-number: -0.03em;
+  --ls-display: -0.02em;
 
   /* Signature elements (dark mirror) */
   --cite-edge: 3px solid var(--accent);
