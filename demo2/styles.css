@@ -1180,7 +1180,8 @@ a:hover { text-decoration: underline; }
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  padding: var(--s-4);
+  padding: var(--s-5);
+  box-shadow: var(--shadow-card);
 }
 .trend-chart__svg {
   display: block;
@@ -1188,13 +1189,38 @@ a:hover { text-decoration: underline; }
   height: auto;
 }
 .trend-chart__svg .axis {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  stroke-dasharray: none;
+  opacity: 0.6;
+}
+.trend-chart__svg .grid {
   stroke: var(--border);
   stroke-width: 1;
-  stroke-dasharray: 2 3;
+  stroke-dasharray: 0;
+  opacity: 0.5;
+}
+.trend-chart__svg .line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.trend-chart__svg .area {
+  fill: var(--accent);
+  opacity: 0.08;
+  stroke: none;
 }
 .trend-chart__svg text {
   fill: var(--text-3);
   font-family: var(--font-mono);
+  font-size: 11px;
+}
+.trend-chart__svg .label {
+  fill: var(--text-2);
+  font-family: var(--font-body);
+  font-weight: 500;
 }
 .section__head {
   display: flex;
@@ -1339,9 +1365,15 @@ a:hover { text-decoration: underline; }
 }
 
 /* SVG sparkline / bar chart (simple, hand-rolled) */
-.spark-line { width: 100%; height: 32px; display: block; }
-.spark-line path { fill: none; stroke: var(--accent); stroke-width: 1.5; }
-.spark-line .axis { stroke: var(--border); stroke-width: 0.5; stroke-dasharray: 2 3; }
+.spark-line { width: 100%; height: 32px; display: block; overflow: visible; }
+.spark-line path { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.spark-line .area { fill: var(--accent); opacity: 0.10; stroke: none; }
+.spark-line .dot {
+  fill: var(--surface-1);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.spark-line .axis { stroke: var(--border-strong); stroke-width: 0.5; stroke-dasharray: 2 3; opacity: 0.5; }
 
 .bar-chart {
   display: flex;
@@ -1352,13 +1384,17 @@ a:hover { text-decoration: underline; }
 }
 .bar-chart__bar {
   flex: 1;
-  background: var(--accent);
+  background: linear-gradient(to top, var(--accent) 0%, var(--accent-hover) 100%);
   border-radius: var(--r-sm) var(--r-sm) 0 0;
   position: relative;
   min-height: 4px;
-  transition: background var(--transition-fast);
+  transition: background var(--transition-base), transform var(--transition-fast);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
-.bar-chart__bar:hover { background: var(--accent-strong); }
+.bar-chart__bar:hover {
+  background: linear-gradient(to top, var(--accent-hover) 0%, var(--accent) 100%);
+  transform: translateY(-1px);
+}
 .bar-chart__bar:hover .bar-chart__tip { opacity: 1; transform: translate(-50%, -4px); }
 .bar-chart__tip {
   position: absolute;
