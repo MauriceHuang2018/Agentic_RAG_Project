@@ -88,13 +88,29 @@ export function useChatStream() {
           assistantMsg.content = final.answer;
         }
         // Backend Pydantic schema uses snake_case (see chat/schema.py).
-        // The TS-side `ChatQueryResponse` interface declared camelCase
-        // historically, but the runtime payload is snake_case — read
-        // `_id` first, fall back to the camelCase alias if some caller
-        // has already normalised it.
+        // The TS-side `ChatQueryResponse` / `CitationItem` interfaces
+        // declared camelCase historically, but the runtime payload is
+        // snake_case — read `_id` first, fall back to the camelCase
+        // alias if some caller has already normalised it.
+        //
+        // Citation fields go one step further: we MAP every entry into
+        // a fresh camelCase object so downstream consumers
+        // (FeedbackModal.vue:110 reads `c.chunkId`,
+        // CitationDrawer.vue:23 reads `c.chunkId`) get the shape they
+        // expect without each consumer re-implementing the fallback.
+        // One normalization point here closes the bug class — verified
+        // 2026-09-07 when POST /feedback surfaced 422
+        // (string_type) on retrieved_chunks because the frontend
+        // mapped `undefined` for all 5 chunk ids.
         const messageId = (final as any).message_id ?? final.messageId;
         assistantMsg.id = messageId;
-        assistantMsg.citations = final.citations ?? (final as any).citations ?? [];
+        const rawCitations = final.citations ?? (final as any).citations ?? [];
+        assistantMsg.citations = (rawCitations as any[]).map((c) => ({
+          chunkId: c.chunk_id ?? c.chunkId ?? '',
+          documentName: c.document_name ?? c.documentName ?? '',
+          pageNo: c.page_no ?? c.pageNo ?? null,
+          relevanceScore: c.relevance_score ?? c.relevanceScore ?? 0,
+        }));
         assistantMsg.response = final;
       }
       assistantMsg.streaming = false;

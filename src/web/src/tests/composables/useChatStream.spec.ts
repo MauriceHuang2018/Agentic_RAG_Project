@@ -100,10 +100,14 @@ describe('useChatStream', () => {
     expect(messages[1].content).toBe('hello world!');
     expect(messages[1].streaming).toBe(false);
     // Backend snake_case is normalised into the message via the
-    // `_id` fallback path in useChatStream (line 87).
+    // `_id` fallback path in useChatStream (line 87) AND the citation
+    // mapper at line 97 (post-2026-09-07 fix). Both message id and
+    // every citation field must surface as camelCase so
+    // FeedbackModal.vue's `c.chunkId` and CitationDrawer.vue's
+    // `c.chunkId` reads don't get `undefined`.
     expect(messages[1].id).toBe('msg-1');
     expect(messages[1].citations).toEqual([
-      { chunk_id: 'c1', document_name: 'manual.pdf', page_no: 1, relevance_score: 0.9 },
+      { chunkId: 'c1', documentName: 'manual.pdf', pageNo: 1, relevanceScore: 0.9 },
     ]);
   });
 
@@ -135,5 +139,31 @@ describe('useChatStream', () => {
     expect(seen[seen.length - 1]).toBe('hello world!');
 
     stop();
+  });
+
+  it('citation chunkId is defined for FeedbackModal/CitationDrawer (camelCase contract, 2026-09-07)', async () => {
+    // Regression: POST /feedback surfaced 422 (string_type) on
+    // retrieved_chunks because FeedbackModal.vue:110 reads
+    // `c.chunkId` and the backend returned snake_case `chunk_id`,
+    // so the .map() produced `[undefined × 5]` → backend rejected.
+    // Pin that the contract reaches the consumer in the shape it
+    // expects — chunkId must be a non-empty string, not undefined.
+    mockStreamChunks(['answer'], 'answer');
+
+    const { messages, sendQuery } = useChatStream();
+    await sendQuery('test query');
+
+    const citations = messages[1].citations;
+    expect(citations).toHaveLength(1);
+    // Every consumer-facing field must be defined and of the right shape.
+    expect(typeof citations[0].chunkId).toBe('string');
+    expect(citations[0].chunkId).toBe('c1');
+    expect(citations[0].documentName).toBe('manual.pdf');
+    expect(citations[0].pageNo).toBe(1);
+    expect(citations[0].relevanceScore).toBe(0.9);
+    // Mirror what FeedbackModal.vue does on submit.
+    const retrievedChunks = citations.map((c) => c.chunkId);
+    expect(retrievedChunks).toEqual(['c1']);
+    expect(retrievedChunks).not.toContain(undefined);
   });
 });
