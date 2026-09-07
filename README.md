@@ -25,8 +25,8 @@
 
 ### 2.1 Agentic 能力：智能路由 + 智能体编排
 
-- **智能路由（Router）**：基于置信度的四级分类器（LLM → 启发式 → 关键词 → 默认），把问题分发到不同通道，避免每次都走 LangGraph 浪费算力。
-- **Agentic RAG（LangGraph 编排）**：复杂问题走 LangGraph 状态机，智能体可多轮调用检索工具、改写查询、合成答案。
+- **智能路由（Router）**：基于置信度的用户意图分类器(LLM,关键词)，把问题分发到不同通道，避免每次都走 LangGraph 浪费算力。
+- **LangGraph 编排**：复杂问题走 LangGraph 状态机，智能体可多轮调用检索工具、改写查询、合成答案。
 - **直搜通道（Direct）**：简单问题走"向量 + BM25 + Rerank"混合检索直出，平均时延显著低于 Agent 路径。
 - **两阶段检索（Two-Stage）**：先粗排父节点（Top-K=3），再细排子节点（Top-K=10），解决长文档跨段语义断裂。
 
@@ -149,6 +149,18 @@
 - [uv](https://docs.astral.sh/uv/)（Python 依赖管理）
 - 至少 8GB 可用内存（Qdrant + DeepDoc + 模型推理）
 
+#### 一行启动（推荐）
+
+完成 5.2 配置后，在项目根目录执行：
+
+```bat
+agenticRAG.bat
+```
+
+脚本会自动拉起 10 个 Docker 基础设施服务，并弹出两个新窗口分别运行后端与前端开发服务器，无需手动开多个终端。首次使用请先运行 `uv sync` 与 `cd src\web && pnpm install`。
+
+> 5.3–5.5 三个小节是 `agenticRAG.bat` 所执行步骤的等价手动命令，方便在调试或自定义场景下使用。
+
 ### 5.2 克隆与配置
 
 ```bash
@@ -164,6 +176,8 @@ cp .env.example .env
 
 ### 5.3 启动基础设施
 
+`agenticRAG.bat` 已自动执行。手动启动命令：
+
 ```bash
 docker compose up -d        # 起 10 个服务
 docker compose ps           # 健康检查
@@ -177,6 +191,8 @@ docker compose ps           # 健康检查
 
 ### 5.4 启动后端
 
+`agenticRAG.bat` 已在弹出的 Backend 窗口中自动启动。手动启动命令：
+
 ```bash
 uv sync                                     # 安装依赖（首次 ~3 分钟）
 uv run python -m agentic_rag_project        # 或 uv run uvicorn agentic_rag_project.main:app --reload
@@ -185,6 +201,8 @@ uv run python -m agentic_rag_project        # 或 uv run uvicorn agentic_rag_pro
 启动日志会打印 `Application startup complete`，监听 `0.0.0.0:8000`。
 
 ### 5.5 启动前端
+
+`agenticRAG.bat` 已在弹出的 Frontend 窗口中自动启动。手动启动命令：
 
 ```bash
 cd src/web
@@ -271,51 +289,12 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 支持格式：PDF / DOCX / PPTX / XLSX / MD / TXT；扫描件自动走 DeepDoc OCR。
 
----
-
-## 七、测试
-
-### 7.1 后端
-
-```bash
-# 全量测试（需数据库可用，Postgres testcontainer 会自动拉起）
-uv run pytest tests/
-
-# 单文件
-uv run pytest tests/test_chat_router.py -v
-
-# 跳过 Postgres testcontainer（无 Docker 环境）
-SKIP_PG_TESTCONTAINER=1 uv run pytest tests/
-
-# 覆盖率
-uv run pytest tests/ --cov=src/agentic_rag_project --cov-report=term-missing
-```
-
-**当前基线**：768 通过 / 1 预存在失败（litellm 配置漂移，与本仓库代码无关）/ 7 跳过。
-
-测试布局：
-
-```
-tests/
-├── conftest.py                    # 全局 fixture
-├── test_*.py                      # 单元测试
-└── integration/                   # 集成测试（含 testcontainers PG）
-```
-
-### 7.2 前端
-
-```bash
-cd src/web
-pnpm test              # vue-tsc + vitest
-pnpm type-check        # 仅类型检查
-pnpm check:perms       # 静态校验路由 permKey ⊂ 后端 PERMISSION_KEYS
-```
 
 ---
 
-## 八、部署到生产
+## 七、部署到生产
 
-### 8.1 关键加固（已完成）
+### 7.1 关键加固（已完成）
 
 - ✅ 所有密钥由 docker-compose `:?` 守卫强制注入，缺失即拒绝启动
 - ✅ Grafana admin 密码必填（无默认）
@@ -323,7 +302,7 @@ pnpm check:perms       # 静态校验路由 permKey ⊂ 后端 PERMISSION_KEYS
 - ✅ Prometheus `/metrics` 仅允许 loopback + CIDR 白名单
 - ✅ Query Guardrail 在 LLM 之前 4 层过滤
 
-### 8.2 部署前自检
+### 7.2 部署前自检
 
 详见 [`docs/m4_3_governance/PROD_DEPLOYMENT_CHECKLIST.md`](./docs/m4_3_governance/PROD_DEPLOYMENT_CHECKLIST.md)。要点：
 
@@ -333,7 +312,7 @@ pnpm check:perms       # 静态校验路由 permKey ⊂ 后端 PERMISSION_KEYS
 4. `PROMETHEUS_MULTIPROC_DIR` 已挂载（多 worker 场景）
 5. PostgreSQL 数据卷、Qdrant snapshot 已纳入备份策略
 
-### 8.3 关闭与清理
+### 7.3 关闭与清理
 
 ```bash
 docker compose down          # 保留数据卷
@@ -342,7 +321,7 @@ docker compose down -v       # 同时删除数据卷（**危险操作**，会清
 
 ---
 
-## 九、项目结构
+## 八、项目结构
 
 ```
 Agentic_RAG_Project/
@@ -415,10 +394,10 @@ Agentic_RAG_Project/
 
 ## 十二、许可证与声明
 
-- 本项目为**原型 / 内部演示用**，生产部署前需完成第三方安全审计
+- 本项目为**原型**，生产部署前需完成第三方安全审计
 - 默认模型为 DashScope（Qwen/DeepSeek 系列），需自备 API Key
-- 部分代码参考 RAGFlow / LangGraph / LiteLLM 等开源项目，遵循各自许可证
+- 部分代码参考 DeepDoc / LangGraph / LiteLLM 等开源项目，遵循各自许可证
 
 ---
 
-**最后更新**：2026-09-05
+**最后更新**：2026-08-20
