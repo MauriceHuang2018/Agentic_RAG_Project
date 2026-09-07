@@ -2849,3 +2849,96 @@ a:hover { text-decoration: underline; }
     white-space: nowrap;
   }
 }
+
+/* ============================================================
+   v2.1 Motion polish (Tier 5) — respect prefers-reduced-motion,
+   add stagger fade-up for stat / msg / table / role-card / ws-card.
+   ============================================================ */
+
+/* Respect users who prefer reduced motion (WCAG 2.3.3 / a11y).
+   Strip every animation + transition to ~0ms; layout still works. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Soft fade-up keyframe (8px lift, ease-out cubic-bezier). */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+@keyframes fade-up-sm {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+/* Stagger: children get fade-up with nth-child delays.
+   Cap at 8 children to avoid an 800ms lag on long lists. */
+.stat,
+.msg,
+.role-card,
+.ws-card,
+.metric-card,
+.audit-row {
+  animation: fade-up 360ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+.stat:nth-child(1),
+.msg:nth-child(1),
+.role-card:nth-child(1),
+.ws-card:nth-child(1),
+.metric-card:nth-child(1),
+.audit-row:nth-child(1) { animation-delay: 0ms; }
+.stat:nth-child(2),
+.msg:nth-child(2),
+.role-card:nth-child(2),
+.ws-card:nth-child(2),
+.metric-card:nth-child(2),
+.audit-row:nth-child(2) { animation-delay: 60ms; }
+.stat:nth-child(3),
+.msg:nth-child(3),
+.role-card:nth-child(3),
+.ws-card:nth-child(3),
+.metric-card:nth-child(3),
+.audit-row:nth-child(3) { animation-delay: 120ms; }
+.stat:nth-child(4),
+.msg:nth-child(4),
+.role-card:nth-child(4),
+.ws-card:nth-child(4),
+.metric-card:nth-child(4),
+.audit-row:nth-child(4) { animation-delay: 180ms; }
+.stat:nth-child(5),
+.msg:nth-child(5),
+.role-card:nth-child(5),
+.ws-card:nth-child(5),
+.metric-card:nth-child(5),
+.audit-row:nth-child(5) { animation-delay: 240ms; }
+.stat:nth-child(6),
+.msg:nth-child(6),
+.role-card:nth-child(6),
+.ws-card:nth-child(6),
+.metric-card:nth-child(6),
+.audit-row:nth-child(6) { animation-delay: 300ms; }
+.stat:nth-child(n+7),
+.msg:nth-child(n+7),
+.role-card:nth-child(n+7),
+.ws-card:nth-child(n+7),
+.metric-card:nth-child(n+7),
+.audit-row:nth-child(n+7) { animation-delay: 360ms; }
+
+/* Tighter fade for table rows (already low-emphasis). */
+.table tbody tr {
+  animation: fade-up-sm 280ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+.table tbody tr:nth-child(odd)  { animation-delay: 0ms; }
+.table tbody tr:nth-child(even) { animation-delay: 30ms; }
+.table tbody tr:nth-child(n+9)  { animation-delay: 60ms; }
+
+/* Drawer/modal slides already use cubic-bezier ease-out — keep as-is. */
