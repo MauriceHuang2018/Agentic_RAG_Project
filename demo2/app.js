@@ -3898,16 +3898,37 @@
     refreshUserCard();
   }
 
-  /** v2.1: wire #btnLogout sidebar button. The button starts hidden and is
-   *  unhidden by refreshUserCard() once a user logs in. We bind once at init
-   *  (the button is always in the DOM, just `is-hidden` until logged in). */
+  /** v2.1: wire #btnLogout sidebar button via BOTH a direct listener and
+   *  document-level event delegation. The direct listener is the canonical
+   *  handler; the delegated one is a safety net so a click anywhere on the
+   *  sidebar's logout button still routes here even if the direct listener
+   *  was somehow detached (e.g. element re-created by a re-render that wiped
+   *  the original). Wrapped in try/catch so any thrown error surfaces as a
+   *  toast instead of silently failing in DevTools. */
   function bindLogoutButton() {
+    const handler = () => {
+      try {
+        const u = state.currentUser;
+        const name = u && (u.display_name || u.name);
+        handleLogout();
+        showToast(name ? `已退出 · ${name}` : "已退出");
+      } catch (err) {
+        // Surface the error instead of swallowing it — fixes the "click does
+        // nothing" report by telling the user (and DevTools) what went wrong.
+        console.error("[logout] handler failed:", err);
+        showToast("退出失败：" + (err && err.message ? err.message : "未知错误"));
+      }
+    };
+
+    // (a) Direct listener on the button, bound once at init.
     const btn = document.getElementById("btnLogout");
-    if (!btn) return;
-    btn.addEventListener("click", () => {
-      const name = state.currentUser && (state.currentUser.display_name || state.currentUser.name);
-      handleLogout();
-      showToast(name ? `已退出 · ${name}` : "已退出", "ok");
+    if (btn) btn.addEventListener("click", handler);
+
+    // (b) Delegated listener on the document — catches clicks on the button
+    // even if the element is replaced/re-bound later.
+    document.addEventListener("click", (e) => {
+      const target = e.target && e.target.closest && e.target.closest("#btnLogout");
+      if (target) handler();
     });
   }
 
