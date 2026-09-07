@@ -149,7 +149,7 @@
 - [uv](https://docs.astral.sh/uv/)（Python 依赖管理）
 - 至少 8GB 可用内存（Qdrant + DeepDoc + 模型推理）
 
-#### 一行启动（推荐）
+#### 菜单启动（推荐）
 
 完成 5.2 配置后，在项目根目录执行：
 
@@ -157,9 +157,13 @@
 agenticRAG.bat
 ```
 
-脚本会自动拉起 10 个 Docker 基础设施服务，并弹出两个新窗口分别运行后端与前端开发服务器，无需手动开多个终端。首次使用请先运行 `uv sync` 与 `cd src\web && pnpm install`。
+按菜单提示选择：
 
-> 5.3–5.5 三个小节是 `agenticRAG.bat` 所执行步骤的等价手动命令，方便在调试或自定义场景下使用。
+- **[1] 首次安装**：自动创建 `.env`（如缺失）+ `uv sync` + `cd src\web && pnpm install`（已存在的步骤会自动跳过）
+- **[2] 一键启动**：`docker compose up -d` 并弹出 Backend / Frontend 两个窗口
+- **[3] 停止所有**：`docker compose down` + 关闭弹出的窗口
+
+> 5.3–5.5 三个小节是 [2] 一键启动 所执行步骤的等价手动命令，方便在调试或自定义场景下使用。
 
 ### 5.2 克隆与配置
 
