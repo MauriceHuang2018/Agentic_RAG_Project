@@ -49,32 +49,35 @@ if not exist ".env.example" (
     echo [X] .env.example not found, cannot create .env
     goto FAIL
 )
-if not exist ".env" (
-    copy /Y .env.example .env
-    echo [!] Created .env - edit secrets before choosing [2] Start
-) else (
-    echo [i] .env already exists, skipping copy
-)
+if exist ".env" goto :ENV_ALREADY
+copy /Y .env.example .env
+echo [!] Created .env - edit secrets before choosing [2] Start
+goto :ENV_DONE
+:ENV_ALREADY
+echo [i] .env already exists, skipping copy
+:ENV_DONE
 echo.
-if exist ".venv" (
-    echo [i] .venv already exists, skipping uv sync
-) else (
-    echo [1/2] uv sync ...
-    uv sync
-    if errorlevel 1 goto FAIL
-)
-if exist "src\web\node_modules" (
-    echo [i] src\web\node_modules already exists, skipping pnpm install
-) else (
-    echo [2/2] pnpm install (src\web) ...
-    cd /d "%~dp0src\web"
-    pnpm install
-    if errorlevel 1 (
-        cd /d "%~dp0"
-        goto FAIL
-    )
+if exist ".venv" goto :VENV_ALREADY
+echo [1/2] uv sync ...
+uv sync
+if errorlevel 1 goto FAIL
+goto :VENV_DONE
+:VENV_ALREADY
+echo [i] .venv already exists, skipping uv sync
+:VENV_DONE
+if exist "src\web\node_modules" goto :NODE_ALREADY
+echo [2/2] pnpm install (src\web) ...
+cd /d "%~dp0src\web"
+pnpm install
+if errorlevel 1 (
     cd /d "%~dp0"
+    goto FAIL
 )
+cd /d "%~dp0"
+goto :NODE_DONE
+:NODE_ALREADY
+echo [i] src\web\node_modules already exists, skipping pnpm install
+:NODE_DONE
 echo.
 echo === Install complete ===
 echo   If .env was newly created, edit secrets before choosing [2] Start
