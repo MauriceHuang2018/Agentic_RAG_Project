@@ -222,9 +222,6 @@ pnpm dev                                   # http://localhost:5173
 | `admin` | `.env` `DEMO_ADMIN_PASSWORD`（默认见 `.env.example`） | `system_admin` + super_admin | 跨工作空间操作员（M6+ 运维/审计） |
 | `alice` | `.env` `DEMO_ALICE_PASSWORD` | `kb_user` | 普通聊天用户 |
 | `bob` | `.env` `DEMO_BOB_PASSWORD` | `kb_user` | 普通聊天用户 |
-| `demo_sys` | `demo_pass`（seed.py 硬编码） | `system_admin` | 系统服务账号（仅 `__system__` workspace，调 chat 会 400） |
-
-> 历史 `smoke` 占位账号已于 2026-09-08 disable 并改名 `__smoke_disabled__`，可忽略。运行 `uv run python tools/disable_smoke_user.py` 在新部署上做一次迁移。
 
 ---
 

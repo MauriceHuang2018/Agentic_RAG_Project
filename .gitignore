@@ -35,7 +35,7 @@ node_modules/
 htmlcov/
 tests/results/
 .demo
-demo2
+demo2_bak/
 test_samples
 
 
@@ -52,7 +52,14 @@ docs/
 notes/
 Product_Design/
 AGENTS.md
-.claude
+.claude/
+
+# Local debug probes (chat/query payloads + JWT tokens, never commit)
+scripts/_chat_query*.json
+_*.txt
+alice_*.json
+probe*.json
+*_response.json
 
 
 # OS
