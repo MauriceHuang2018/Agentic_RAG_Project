@@ -447,6 +447,88 @@ def builtin_role_names() -> tuple[str, ...]:
     return tuple(spec.name for spec in BUILTIN_ROLES)
 
 
+# -----------------------------------------------------------------------------
+# Admin user (2026-09-08 — cross-workspace operator account)
+#
+# Distinct from `demo_sys` (`seed_demo_user`):
+#   - `is_super_admin=True` — FastAPI dependency bypass for unrestricted
+#     operator actions (e.g. cross-workspace audit lookups, sensitive-value
+#     maintenance). `demo_sys` keeps `is_super_admin=False` because it's a
+#     scoped smoke account.
+#   - `status='enable'` (not 'disable' like `__system_owner__`).
+#   - Bound to `system_admin` role in `SYSTEM_WORKSPACE_ID` — same binding
+#     shape as `demo_sys` so the role grant is the source of cross-workspace
+#     authority, not the boolean flag.
+#
+# Idempotent: re-running is a no-op. Username is a project invariant
+# (always 'admin'); password comes from `.env` `DEMO_ADMIN_PASSWORD`
+# (default `admin_pass`, matching the alice/bob pattern — see
+# `_get_admin_settings_password`).
+# -----------------------------------------------------------------------------
+
+ADMIN_USERNAME = "admin"
+ADMIN_EMAIL = "admin@local"
+
+
+def _get_admin_settings_password() -> str:
+    """Read the admin operator password from Settings.
+
+    Imported lazily so tests that build a Settings fixture with `.env`
+    missing still get the documented default. Same pattern as
+    `_get_demo_settings_passwords`.
+    """
+    from agentic_rag_project.config import get_settings
+
+    return get_settings().demo_admin_password
+
+
+def seed_admin_user(session: Session) -> User | None:
+    """Bootstrap the cross-workspace `admin` operator account.
+
+    Returns the User row, or None if `system_admin` was not seeded
+    yet (call `seed_builtin_roles` first).
+    """
+    sys_admin = session.execute(
+        select(Role).where(Role.name == "system_admin")
+    ).scalar_one_or_none()
+    if sys_admin is None:
+        logger.warning(
+            "system_admin role missing; call seed_builtin_roles() first"
+        )
+        return None
+
+    existing = session.execute(
+        select(User).where(User.username == ADMIN_USERNAME)
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    user = User(
+        username=ADMIN_USERNAME,
+        email=ADMIN_EMAIL,
+        password_hash=_hash_demo_password(_get_admin_settings_password()),
+        status="enable",
+        is_super_admin=True,
+        display_name="System Admin",
+    )
+    session.add(user)
+    session.flush()
+
+    binding = UserRole(
+        user_id=user.id,
+        role_id=sys_admin.id,
+        workspace_id=SYSTEM_WORKSPACE_ID,
+    )
+    session.add(binding)
+    session.commit()
+    logger.info(
+        "seeded admin user %s bound to system_admin in workspace %s",
+        ADMIN_USERNAME,
+        SYSTEM_WORKSPACE_ID,
+    )
+    return user
+
+
 def seed_demo_user(session: Session) -> User | None:
     """Bootstrap a demo `system_admin` account for Page 15 smoke tests.
 

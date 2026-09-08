@@ -15,7 +15,7 @@
 
 本项目搭建了一套**企业级 Agentic RAG 智能问答系统原型**：用户上传文档后，系统通过「智能体规划 → 多源检索 → 答案生成 → 引用溯源 → 合规过滤」的完整链路，给出**可溯源、可审计、可度量**的回答。
 
-核心目标不是做一个玩具 demo，而是验证「把 Agentic RAG 推到生产环境」所需的全部工程要素——权限、审计、观测、治理、安全、性能——是否都能落到代码与基础设施层面。
+核心目标是验证「把 Agentic RAG 推到生产环境」所需的全部工程要素——权限、审计、观测、治理、安全、性能——是否都能落到代码与基础设施层面。
 
 完整需求见 [`Product_Design/企业级Agentic_RAG智能问答系统_PRD.docx`](./Product_Design/)；架构决策见 [`docs/phase1-mvp/`](./docs/phase1-mvp/)。
 
@@ -25,7 +25,7 @@
 
 ### 2.1 Agentic 能力：智能路由 + 智能体编排
 
-- **智能路由（Router）**：基于置信度的用户意图分类器(LLM,关键词)，把问题分发到不同通道，避免每次都走 LangGraph 浪费算力。
+- **智能路由（Router）**：基于置信度的用户意图分类器(LLM,关键词)，把问题分发到不同通道(简单/复杂/全局分析/精确事实)，优化使用场景和成本。
 - **LangGraph 编排**：复杂问题走 LangGraph 状态机，智能体可多轮调用检索工具、改写查询、合成答案。
 - **直搜通道（Direct）**：简单问题走"向量 + BM25 + Rerank"混合检索直出，平均时延显著低于 Agent 路径。
 - **两阶段检索（Two-Stage）**：先粗排父节点（Top-K=3），再细排子节点（Top-K=10），解决长文档跨段语义断裂。
@@ -41,8 +41,8 @@
 ### 2.3 多模态文档解析
 
 - **5 个文本抽取器**：PyMuPDF（PDF）/ python-docx（DOCX）/ python-pptx（PPTX）/ openpyxl（XLSX）/ 原生（MD/TXT）。
-- **视觉路由（Visual Router）**：扫描件/复杂版式 PDF 自动分流到 DeepDoc OCR 服务（LitServe :9390）。
-- **RapidOCR 兜底**：DeepDoc 不可用时本地 RapidOCR 兜底，无单点依赖。
+- **视觉路由（Visual Router）**：扫描件/复杂版式 PDF 自动分流到 DeepDoc OCR 服务。
+- **RapidOCR 兜底**：DeepDoc 不可用时,本地 RapidOCR 兜底，无单点依赖。
 - **解析幂等**：通过 UUID5 + `ON CONFLICT` 实现 upsert 幂等，重复上传不产生脏数据。
 
 ### 2.4 可观测与治理
@@ -54,7 +54,7 @@
 
 ### 2.5 工程化交付
 
-- **端到端类型安全**：后端 Pydantic / 前端 OpenAPI 自动生成 TS 类型，编译期发现字段不一致。
+- **端到端类型安全**：后端 Pydantic / 前端 OpenAPI 自动生成 TS 类型，编译期及时发现并处理字段不一致。
 - **完整测试金字塔**：768 个测试通过（pytest + vitest），含单元 / 集成 / 契约测试。
 - **Docker Compose 一键起**：10 个服务编排（PostgreSQL / Redis / Qdrant / LiteLLM / DeepDoc / API / Celery / Prometheus / Grafana / Alertmanager）。
 - **前端 Vue 3 单页应用**：14 路由 + 3 守卫 + 7 Pinia store + RBAC 内建，无需手写权限。
@@ -68,13 +68,13 @@
 | 类别 | 选型 | 说明 |
 |------|------|------|
 | 语言 | Python 3.11+ | 类型注解 + `from __future__ import annotations` |
-| Web 框架 | FastAPI 0.115+ | 异步、自动 OpenAPI |
-| 数据校验 | Pydantic 2.9+ | 全链路类型契约 |
 | Agent 框架 | LangGraph 0.2+ | 状态机编排 + 工具调用 |
-| LLM 网关 | LiteLLM 1.52+ | 模型无关，支持 DeepSeek-V3 / R1 / Qwen 系列 |
 | 向量库 | Qdrant | 混合检索（dense + sparse BM25）|
 | 关系库 | PostgreSQL 16 | 17 张表，Alembic 迁移管理 |
 | 缓存 / 队列 | Redis 7 / Celery | 缓存 + 异步任务 |
+| LLM 网关 | LiteLLM 1.52+ | 模型无关，支持 DeepSeek-V3 / R1 / Qwen 系列 |
+| Web 框架 | FastAPI 0.115+ | 异步、自动 OpenAPI |
+| 数据校验 | Pydantic 2.9+ | 全链路类型契约 |
 | 包管理 | uv | `pyproject.toml` + `uv.lock`，**禁止**手动 `pip install` |
 
 ### 前端
@@ -160,7 +160,7 @@ agenticRAG.bat
 按菜单提示选择：
 
 - **[1] 首次安装**：自动创建 `.env`（如缺失）+ `uv sync` + `cd src\web && pnpm install`（已存在的步骤会自动跳过）
-- **[2] 一键启动**：`docker compose up -d` 并弹出 Backend / Frontend 两个窗口
+- **[2] 一键启动**：`docker compose up -d` 并弹出 Backend & Frontend 两个窗口
 - **[3] 停止所有**：`docker compose down` + 关闭弹出的窗口
 
 > 5.3–5.5 三个小节是 [2] 一键启动 所执行步骤的等价手动命令，方便在调试或自定义场景下使用。
@@ -168,7 +168,7 @@ agenticRAG.bat
 ### 5.2 克隆与配置
 
 ```bash
-git clone <your-fork-url>
+git clone <your-fork-url>   # 需要先下载代码
 cd Agentic_RAG_Project
 
 # 后端依赖
@@ -215,15 +215,16 @@ pnpm gen:openapi                            # 从后端 OpenAPI 生成 TS 类型
 pnpm dev                                   # http://localhost:5173
 ```
 
-默认登录账号（来自 `seed_demo_data`）：
+默认登录账号（来自 `seed_admin_user` / `seed_demo_data`）：
 
-| 用户名 | 角色 | 用途 |
-|--------|------|------|
-| `admin` | super_admin | 系统管理 |
-| `chat_user` | chat_user | 普通聊天用户 |
-| `demo_sys` | system | 系统服务账号 |
+| 用户名 | 密码 | 角色 | 用途 |
+|--------|------|------|------|
+| `admin` | `.env` `DEMO_ADMIN_PASSWORD`（默认见 `.env.example`） | `system_admin` + super_admin | 跨工作空间操作员（M6+ 运维/审计） |
+| `alice` | `.env` `DEMO_ALICE_PASSWORD` | `kb_user` | 普通聊天用户 |
+| `bob` | `.env` `DEMO_BOB_PASSWORD` | `kb_user` | 普通聊天用户 |
+| `demo_sys` | `demo_pass`（seed.py 硬编码） | `system_admin` | 系统服务账号（仅 `__system__` workspace，调 chat 会 400） |
 
-> 演示账号的密码见 [`src/agentic_rag_project/rbac/seed.py`](./src/agentic_rag_project/rbac/seed.py)。
+> 历史 `smoke` 占位账号已于 2026-09-08 disable 并改名 `__smoke_disabled__`，可忽略。运行 `uv run python tools/disable_smoke_user.py` 在新部署上做一次迁移。
 
 ---
 

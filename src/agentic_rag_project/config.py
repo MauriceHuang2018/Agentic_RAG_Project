@@ -219,6 +219,10 @@ class Settings(BaseSettings):
     # in-process (see `tests/test_demo_data_seed.py::test_..._rotates`).
     demo_alice_password: str = Field(default="alice_pass")
     demo_bob_password: str = Field(default="bob_pass")
+    # Cross-workspace operator account (2026-09-08). Password default
+    # matches the alice/bob pattern; override via `.env`
+    # `DEMO_ADMIN_PASSWORD` for non-dev deployments.
+    demo_admin_password: str = Field(default="admin_pass")
 
 
 @lru_cache(maxsize=1)
