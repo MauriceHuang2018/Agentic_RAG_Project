@@ -168,7 +168,7 @@ agenticRAG.bat
 ### 5.2 克隆与配置
 
 ```bash
-git clone <your-fork-url>   # 需要先下载代码
+git clone https://github.com/MauriceHuang2018/Agentic_RAG_Project.git   # 需要先下载代码
 cd Agentic_RAG_Project
 
 # 后端依赖
