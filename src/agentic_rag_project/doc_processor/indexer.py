@@ -7,6 +7,24 @@ be applied without a second hop back to Postgres.
 
 `index(embedded)` is the public entrypoint; it writes to both stores
 inside a single function so the caller can wrap it in a Celery task.
+
+`chunk_index` semantics — see DESIGN §4.4
+(`docs/phase1-mvp/DESIGN_phase1-mvp.md`, §4.4 lines 698-722 and the
+`(document_id, chunk_index)` index definition at line 635):
+
+  - The `(document_id, chunk_index)` index is the canonical
+    "文档切片顺序重建" (document chunk order reconstruction) — i.e.
+    `ORDER BY chunk_index` rebuilds the document reading order.
+  - Per `DESIGN §4.4`, `is_parent` is the parent/child discriminator
+    (one bool, two values), NOT a separate index namespace. So
+    `chunk_index` is a SINGLE document-wide serial running
+    `0..P-1` (parents) then `P..P+C-1` (children).
+  - Parent ↔ child correspondence is expressed via the
+    `parent_chunk_id` self-FK (`chunks.parent_chunk_id → chunks.id`),
+    NOT via chunk_index. Debugging tip: when you see e.g.
+    `chunk_index=7 (parent)` and `chunk_index=218 (child)` in PG,
+    `218 = len(parents) + 7` — the child belongs to the parent with
+    `chunk_index=7`. JOIN through `parent_chunk_id` to find the pair.
 """
 
 from __future__ import annotations
@@ -117,6 +135,14 @@ def _write_chunks_row(
     changes on reindex — moving a document across workspaces is a
     separate operation that goes through a dedicated migration
     (out of scope here).
+
+    `chunk_index` semantics — see DESIGN §4.4
+    (`docs/phase1-mvp/DESIGN_phase1-mvp.md` line 635). It is a
+    single document-wide serial: parents get 0..P-1, children get
+    P..P+C-1. The `(document_id, chunk_index)` index is the
+    "文档切片顺序重建" canonical reading order. Parent ↔ child
+    correspondence is expressed via the `parent_chunk_id` self-FK,
+    NOT via chunk_index.
     """
     row_id = _chunk_uuid(chunk_id)
     content_hash = _content_hash(content)
@@ -215,6 +241,21 @@ def index(
         session.flush()
 
         # Pass 2: children — each child's parent_chunk_id is the parent's PG UUID.
+        #
+        # `chunk_index = len(parents) + child_index` is INTENTIONAL — it makes
+        # the parent's and child's chunk_index belong to ONE document-wide
+        # serial space so that `(document_id, chunk_index)` can be used to
+        # rebuild the document reading order (`ORDER BY chunk_index`).
+        # See DESIGN §4.4 (docs/phase1-mvp/DESIGN_phase1-mvp.md line 635:
+        # "(document_id, chunk_index)" — "文档切片顺序重建").
+        #
+        # This means a child does NOT share its parent's chunk_index by
+        # number — if you see chunk_index=7 (parent) and chunk_index=218
+        # (child), the 218 is `len(parents) + 7` and the child belongs to
+        # the parent at chunk_index=7. JOIN through `parent_chunk_id`
+        # (the self-FK) to find the parent/child pair. Debugging queries
+        # that filter on chunk_index alone will appear to "skip" parent
+        # numbers — that is by design.
         for child_index, child in enumerate(embedded):
             parent_uuid = _chunk_uuid(child.parent_id)
             page = int(child.payload.get("page", 0))
