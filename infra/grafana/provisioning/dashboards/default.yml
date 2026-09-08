@@ -1,4 +1,4 @@
-# Auto-load dashboards from /var/lib/grafana/dashboards.
+# Auto-load dashboards from /etc/grafana/provisioning/dashboards.
 apiVersion: 1
 providers:
   - name: rag-eval
@@ -8,5 +8,5 @@ providers:
     disableDeletion: false
     editable: true
     options:
-      path: /var/lib/grafana/dashboards
+      path: /etc/grafana/provisioning/dashboards
       foldersFromFilesStructure: true

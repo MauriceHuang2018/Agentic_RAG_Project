@@ -7,16 +7,18 @@ hard-coded `00000000-...-0000` sentinel, the chat request gets
 rejected with 403 `not_a_member_of_workspace`, and the user sees
 an empty/incorrect dropdown.
 
-Endpoint (matches `docs/原型设计/前端页面规划与字段-表映射.md` §Page 14):
-  - `GET /me/workspaces`  → list the caller's workspaces (id, name,
-                            isolation_level, status), excluding the
-                            designated `__system__` container.
+Endpoints (matches `docs/原型设计/前端页面规划与字段-表映射.md` §Page 14):
+  - `GET /me/workspaces`    → list the caller's workspaces (id, name,
+                              isolation_level, status), excluding the
+                              designated `__system__` container.
+  - `GET /me/permissions`   → flat set of `<resource>:<action>` keys
+                              the caller holds across every workspace
+                              binding, for the frontend `rbac.guard`
+                              UX gate (see `stores/auth.ts`).
 
-The endpoint delegates to `UserContext.workspace_ids` (already
-filtered for `__system__` by `_resolve_user_context`) and joins the
-`workspaces` table only for display fields. Super-admins see every
-non-system workspace; regular users see only those they have a role
-binding in.
+Both endpoints delegate to `UserContext` (already filtered for
+`__system__` by `_resolve_user_context`). Super-admins see every
+non-system workspace; their permission set is the wildcard `'*'`.
 """
 
 from __future__ import annotations
@@ -84,6 +86,31 @@ def list_my_workspaces(
         }
         for row in rows
     ]
+
+
+@router.get(
+    "/permissions",
+    summary="Permission keys the caller holds, for the frontend rbac.guard UX gate.",
+    response_model=dict,
+)
+def get_my_permissions(
+    ctx: Annotated[UserContext, Depends(get_current_user)],
+) -> dict:
+    """Return the caller's permission keys as `{permissions: list[str]}`.
+
+    Mirrors `_resolve_user_context.permissions` so the frontend can
+    populate `auth.permissions` after login. The authoritative check
+    still lives in `dependencies.require_permission` — this endpoint
+    is the UX gate only. The wildcard `'*'` is returned literally for
+    super_admin to mirror `PERMISSION_WILDCARD` in
+    `src/web/src/constants/permissions.ts`.
+
+    The list is sorted alphabetically so the response is deterministic
+    across calls; clients that need set semantics should dedupe on
+    their side (the backend never returns duplicates — `permissions`
+    is a `frozenset[str]`).
+    """
+    return {"permissions": sorted(ctx.permissions)}
 
 
 __all__ = ["router"]

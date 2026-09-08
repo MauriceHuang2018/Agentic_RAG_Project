@@ -19,7 +19,7 @@ from agentic_rag_project.db.session import SessionLocal
 from agentic_rag_project.feedback.service import FeedbackService
 from agentic_rag_project.post_processor.filter import SensitiveWordFilter
 from agentic_rag_project.post_processor.mask import Masker
-from agentic_rag_project.rbac import seed_builtin_roles, seed_demo_data
+from agentic_rag_project.rbac import seed_admin_user, seed_builtin_roles, seed_demo_data
 from agentic_rag_project.retrieval_direct.long_context_fallback import (
     LongContextFallback,
 )
@@ -92,6 +92,17 @@ def _build_chat_service() -> ChatService | None:
         # is comfortable for a healthy qwen3.7-plus (~3s measured).
         llm_classifier=LLMClassifier(
             timeout_seconds=settings.router_classifier_timeout_seconds,
+            # Cap classifier output (route JSON is small) and kill the
+            # reasoning trace — both default OFF per Settings. Wire them
+            # unconditionally when the env didn't explicitly re-enable
+            # thinking; that way operators can flip on for debugging by
+            # setting CLASSIFIER_ENABLE_THINKING=true. Step 6 / 2026-09-05.
+            max_tokens=settings.classifier_max_tokens,
+            extra_body=(
+                {"enable_thinking": False}
+                if not settings.classifier_enable_thinking
+                else None
+            ),
         ),
         keyword_classifier=KeywordClassifier(),
     )
@@ -145,12 +156,13 @@ async def lifespan(_: FastAPI):
     session = SessionLocal()
     try:
         seed_builtin_roles(session)
+        seed_admin_user(session)
         seed_demo_data(session)
         svc = FeedbackService(session=session)
         svc.seed_default_categories()
         svc.seed_default_ticket_statuses()
         session.commit()
-        logger.info("rbac + feedback dictionaries + demo data seeded")
+        logger.info("rbac + feedback dictionaries + admin/demo data seeded")
     finally:
         session.close()
 

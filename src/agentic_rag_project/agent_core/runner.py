@@ -82,7 +82,7 @@ class RetrievalBackend(Protocol):
 # Default factory for the LLM call. Imported lazily so the module can be
 # imported without forcing litellm to load at import time.
 def default_agent_llm_call(
-    system_prompt: str, user_prompt: str, timeout: float
+    system_prompt: str, user_prompt: str, timeout: float, **kwargs: Any
 ) -> str:
     """Production LLM call via litellm.
 
@@ -90,10 +90,23 @@ def default_agent_llm_call(
     the synthesize node is allowed to return free-form text; the plan
     / reflect / rewrite nodes extract JSON with the tolerant
     `_extract_json` helper.
+
+    Per-call kwargs (`max_tokens`, `extra_body`, ...) win over
+    `Settings.agent_synth_*` so future per-node overrides (plan vs
+    synth) can be wired by passing kwargs from `nodes.py` without
+    changing this function. When the caller passes nothing, we read
+    `Settings.agent_synth_*` defaults: thinking ON (multi-hop benefits
+    from reasoning) + max_tokens=1024 (cap answer length).
+
+    See Step 7 / 2026-09-05 (chat synth latency optimization).
     """
     from agentic_rag_project.config import get_settings
 
     settings = get_settings()
+    if "max_tokens" not in kwargs and settings.agent_synth_max_tokens:
+        kwargs["max_tokens"] = settings.agent_synth_max_tokens
+    if "extra_body" not in kwargs and not settings.agent_synth_enable_thinking:
+        kwargs["extra_body"] = {"enable_thinking": False}
     response = completion_with_metrics(
         model=settings.litellm_model,
         api_base=settings.litellm_base_url or None,
@@ -103,6 +116,7 @@ def default_agent_llm_call(
             {"role": "user", "content": user_prompt},
         ],
         timeout=timeout,
+        **kwargs,
     )
     return response["choices"][0]["message"]["content"] or ""
 
@@ -143,9 +157,26 @@ class AgentRunner:
         user_context: dict[str, Any],
         conversation_id: str | None = None,
         history: list[dict[str, Any]] | None = None,
+        acl_filter: Any | None = None,
     ) -> AgentResult:
+        """Execute one agent turn.
+
+        `acl_filter` is a per-call override of the runner's
+        constructor-set ``self._acl_filter``. When the chat router
+        builds a fresh `qmodels.Filter` per request (which is
+        correct — workspace memberships and ACL rows change
+        between calls) the caller passes it here so the retrieve
+        node scopes Qdrant queries to the caller's permissions.
+        Without this override the runner would silently reuse the
+        filter from its construction time, which can leak across
+        sessions. P0 / 2026-09-03.
+        """
         if not (query or "").strip():
             raise AgentRunnerError("query must be non-empty")
+
+        # Per-call wins over the constructor default. Treat None as
+        # "use the default"; treat any truthy value as the new filter.
+        effective_acl_filter = acl_filter if acl_filter is not None else self._acl_filter
 
         state = make_initial_state(
             query=query,
@@ -191,7 +222,7 @@ class AgentRunner:
                     retrieve_node,
                     state,
                     retrieval_tool=retrieval_tool,
-                    acl_filter=self._acl_filter,
+                    acl_filter=effective_acl_filter,
                 )
             except Exception as exc:
                 logger.exception("agent retrieve failed")

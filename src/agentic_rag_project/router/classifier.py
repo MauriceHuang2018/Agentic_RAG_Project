@@ -31,7 +31,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 from agentic_rag_project.observability.llm_metrics import completion_with_metrics
 
@@ -104,22 +104,29 @@ class RouteDecision:
 
 # Type alias for the injected LLM callable. Tests substitute a fake
 # here; production wires `litellm.completion`.
-LLMCallFn = Callable[[str, str, float], dict]
+LLMCallFn = Callable[..., dict]
 """
-Signature: (system_prompt, user_prompt, timeout_seconds) -> parsed dict
+Signature: (system_prompt, user_prompt, timeout_seconds, **kwargs) -> parsed dict.
 The dict must contain `route` (`'direct'|'agent'`) and `confidence`
-(`0.0..1.0`); `reason` is optional.
+(`0.0..1.0`); `reason` is optional. `**kwargs` (max_tokens, extra_body,
+...) are forwarded by `LLMClassifier` from `Settings.classifier_*`
+knobs (wired in Step 6 / 2026-09-05) so call sites can cap output and
+toggle reasoning without changing the signature.
 """
 
 
 def default_litellm_call(
-    system_prompt: str, user_prompt: str, timeout: float
+    system_prompt: str, user_prompt: str, timeout: float, **kwargs: Any
 ) -> dict:
     """Default LLM call wired to litellm.completion.
 
     Imports litellm lazily (inside `completion_with_metrics`) so the
     module can be imported by tests that never invoke the router
     (no network round-trip required at import time).
+
+    Extra kwargs (`max_tokens`, `extra_body`, ...) flow through to
+    `completion_with_metrics` unchanged. The caller (`LLMClassifier.classify`)
+    assembles them from `Settings.classifier_*` knobs.
     """
     from agentic_rag_project.config import get_settings
 
@@ -134,6 +141,7 @@ def default_litellm_call(
         ],
         timeout=timeout,
         response_format={"type": "json_object"},
+        **kwargs,
     )
     content = response["choices"][0]["message"]["content"]
     return json.loads(content)
@@ -187,11 +195,19 @@ class LLMClassifier:
     The `llm_call` parameter is the injection point: tests pass a
     deterministic function returning a fixed dict; production uses
     `default_litellm_call`.
+
+    `max_tokens` and `extra_body` are forwarded as `**kwargs` to
+    `llm_call` on every invocation. They default to `None` so existing
+    callers (tests, single-call sites) keep the previous signature —
+    only the production wiring in `main.ConfidenceRouter` sets them.
+    See Step 6 / 2026-09-05 (chat synth latency optimization).
     """
 
     llm_call: LLMCallFn = default_litellm_call
     timeout_seconds: float = 10.0
     system_prompt: str = CLASSIFY_SYSTEM_PROMPT
+    max_tokens: int | None = None
+    extra_body: dict[str, Any] | None = None
 
     def classify(self, query: str) -> RouteDecision:
         q = query.strip()
@@ -203,9 +219,17 @@ class LLMClassifier:
                 source="llm",
             )
         truncated = q[:MAX_CLASSIFY_QUERY_LEN]
+        # Build kwargs only when the caller opted in — preserves the
+        # legacy `llm_call(system, user, timeout)` signature for old
+        # stubs that don't accept **kwargs.
+        kwargs: dict[str, Any] = {}
+        if self.max_tokens is not None:
+            kwargs["max_tokens"] = self.max_tokens
+        if self.extra_body is not None:
+            kwargs["extra_body"] = self.extra_body
         try:
             payload = self.llm_call(
-                self.system_prompt, truncated, self.timeout_seconds
+                self.system_prompt, truncated, self.timeout_seconds, **kwargs
             )
         except Exception as exc:  # pragma: no cover — only fires on real LLM
             raise ClassifierError(f"llm call failed: {exc}") from exc

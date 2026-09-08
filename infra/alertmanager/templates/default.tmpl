@@ -7,10 +7,10 @@
 *Alert*:     {{ .Labels.alertname }}
 *Severity*:  {{ .Labels.severity }}
 *Team*:      {{ .Labels.team }}
-*Workspace*: {{ .Labels.workspace_id | default "global" }}
-*Kind*:      {{ .Labels.kind | default "n/a" }}
-*Metric*:    {{ .Labels.metric_name | default "n/a" }}
-*Runbook*:   https://wiki.internal/runbooks/rag/{{ .Labels.runbook | default "general" }}
+*Workspace*: {{ if .Labels.workspace_id }}{{ .Labels.workspace_id }}{{ else }}global{{ end }}
+*Kind*:      {{ if .Labels.kind }}{{ .Labels.kind }}{{ else }}n/a{{ end }}
+*Metric*:    {{ if .Labels.metric_name }}{{ .Labels.metric_name }}{{ else }}n/a{{ end }}
+*Runbook*:   https://wiki.internal/runbooks/rag/{{ if .Labels.runbook }}{{ .Labels.runbook }}{{ else }}general{{ end }}
 *Summary*:   {{ .Annotations.summary }}
 *Details*:   {{ .Annotations.description }}
 {{ end }}

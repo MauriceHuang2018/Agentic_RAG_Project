@@ -6,9 +6,9 @@
 <template>
   <div class="conversation-list">
     <div class="conversation-list-header">
-      <el-button type="primary" plain size="small" @click="emit('new-chat')">
+      <button type="button" class="conversation-new-btn" @click="emit('new-chat')">
         {{ t('chat.newChat') }}
-      </el-button>
+      </button>
     </div>
 
     <el-scrollbar v-if="conversations.length > 0" style="height: calc(100% - 56px)">
@@ -64,45 +64,79 @@ function formatTime(ts: number): string {
 </script>
 
 <style scoped>
+/* PlanA v1.0 visual pass — sidebar: surface-1 + 1px right hairline + accent active state. */
 .conversation-list {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #fafbfc;
-  border-right: 1px solid #ebeef5;
+  background: var(--surface-1);
+  border-right: var(--hairline);
 }
 .conversation-list-header {
-  padding: 12px;
-  border-bottom: 1px solid #ebeef5;
+  padding: var(--s-3) var(--s-4);
+  border-bottom: var(--hairline);
+}
+.conversation-new-btn {
+  width: 100%;
+  height: 36px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--text-inverse);
+  border: 1px solid var(--accent);
+  font-weight: 500;
+  font-size: var(--fs-14);
+  cursor: pointer;
+  font-family: var(--font-body);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.conversation-new-btn:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+.conversation-new-btn:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 2px;
 }
 .conversation-item {
-  padding: 12px 16px;
+  padding: var(--s-3) var(--s-4);
   cursor: pointer;
-  border-bottom: 1px solid #f0f0f0;
-  transition: background 0.15s;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  transition: background var(--transition-fast);
 }
 .conversation-item:hover {
-  background: #f0f4ff;
+  background: var(--surface-2);
 }
 .conversation-item.is-active {
-  background: #e6f1ff;
+  background: var(--accent-soft);
+}
+.conversation-item.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent);
 }
 .conversation-item-title {
   font-weight: 500;
-  font-size: 14px;
+  font-size: var(--fs-14);
+  color: var(--text-1);
   margin-bottom: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .conversation-item-meta {
-  font-size: 12px;
-  color: #909399;
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  font-family: var(--font-mono);
 }
 .conversation-empty {
-  padding: 24px;
+  padding: var(--s-6);
   text-align: center;
-  color: #909399;
-  font-size: 13px;
+  color: var(--text-3);
+  font-size: var(--fs-13);
 }
 </style>

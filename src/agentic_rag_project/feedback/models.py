@@ -182,12 +182,37 @@ class Feedback(_Base):
         PG_UUID(as_uuid=True), nullable=False, index=True
     )
     rating: Mapped[FeedbackRating] = mapped_column(
-        Enum(FeedbackRating, name="feedback_rating"), nullable=False
+        # IMPORTANT (2026-09-07): `values_callable` makes SQLAlchemy
+        # store/compare against `member.value` ('like' / 'dislike')
+        # instead of `member.name` ('LIKE' / 'DISLIKE'). Without this,
+        # every INSERT writes 'LIKE' to the VARCHAR(16) column, but
+        # every WHERE filter in the codebase uses `rating.value`
+        # ('like' lowercase) — so CSAT / drift / observability all
+        # return 0 rows. This is the same family of bug as the
+        # `attribution_status` drift below. values_callable is the
+        # single-line fix that keeps the PG-side type as VARCHAR (no
+        # need to switch to a PG ENUM type).
+        Enum(
+            FeedbackRating,
+            name="feedback_rating",
+            values_callable=lambda enum_cls: [m.value for m in enum_cls],
+        ),
+        nullable=False,
     )
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     ragas_scores: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     attribution_status: Mapped[AttributionStatus] = mapped_column(
-        Enum(AttributionStatus, name="attribution_status"),
+        # IMPORTANT (2026-09-07): same fix as `rating` above — store
+        # the enum value ('pending' / 'succeeded' / 'failed' /
+        # 'skipped') not the Python member name ('PENDING' / ...).
+        # The DEFAULT and server_default use `AttributionStatus.PENDING`
+        # (the enum instance) which SQLAlchemy serializes via the
+        # values_callable too.
+        Enum(
+            AttributionStatus,
+            name="attribution_status",
+            values_callable=lambda enum_cls: [m.value for m in enum_cls],
+        ),
         nullable=False,
         default=AttributionStatus.PENDING,
         server_default=AttributionStatus.PENDING.value,

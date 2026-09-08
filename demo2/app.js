@@ -3887,11 +3887,131 @@
     renderWorkspaceMenu();
     renderHistory();
     renderChat();
+    // v2.1: apply saved theme (light / dark / system) to <html> before first paint
+    applyTheme(resolveThemePreference());
+    bindThemeToggle();
+    bindLogoutButton();
     // v2.0 P1: restore remembered session, otherwise show login
     const restored = restoreRememberedLogin();
     setView(restored ? "chat" : "login");
     // Update sidebar user-card with current user (if any)
     refreshUserCard();
+  }
+
+  /** v2.1: wire #btnLogout sidebar button via BOTH a direct listener and
+   *  document-level event delegation. The direct listener is the canonical
+   *  handler; the delegated one is a safety net so a click anywhere on the
+   *  sidebar's logout button still routes here even if the direct listener
+   *  was somehow detached (e.g. element re-created by a re-render that wiped
+   *  the original). Wrapped in try/catch so any thrown error surfaces as a
+   *  toast instead of silently failing in DevTools. */
+  function bindLogoutButton() {
+    const handler = () => {
+      try {
+        const u = state.currentUser;
+        const name = u && (u.display_name || u.name);
+        handleLogout();
+        showToast(name ? `已退出 · ${name}` : "已退出");
+      } catch (err) {
+        // Surface the error instead of swallowing it — fixes the "click does
+        // nothing" report by telling the user (and DevTools) what went wrong.
+        console.error("[logout] handler failed:", err);
+        showToast("退出失败：" + (err && err.message ? err.message : "未知错误"));
+      }
+    };
+
+    // (a) Direct listener on the button, bound once at init.
+    const btn = document.getElementById("btnLogout");
+    if (btn) btn.addEventListener("click", handler);
+
+    // (b) Delegated listener on the document — catches clicks on the button
+    // even if the element is replaced/re-bound later.
+    document.addEventListener("click", (e) => {
+      const target = e.target && e.target.closest && e.target.closest("#btnLogout");
+      if (target) handler();
+    });
+  }
+
+  /** v2.1 Theme: resolve preference string to concrete theme ("light" | "dark").
+   *  Prefers "system" → match OS prefers-color-scheme. Fallback: light. */
+  function resolveThemePreference() {
+    const pref = (state.preferences && state.preferences.theme) || "light";
+    if (pref === "system") {
+      const mql = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+      return mql && mql.matches ? "dark" : "light";
+    }
+    return pref === "dark" ? "dark" : "light";
+  }
+
+  /** v2.1 Theme: set <html data-theme="..."> and persist resolved value in localStorage
+   *  so reload stays consistent. Does not mutate the user-visible preference (still "system"
+   *  resolves to dark on a dark OS, light on a light OS). */
+  function applyTheme(theme) {
+    const root = document.documentElement;
+    if (theme === "dark") root.setAttribute("data-theme", "dark");
+    else root.removeAttribute("data-theme");
+    try { localStorage.setItem("docgpt.theme.resolved", theme); } catch (_) { /* ignore */ }
+  }
+
+  /** v2.1 Theme: topbar dropdown — 3 options (light / dark / system).
+   *  Click button toggles menu visibility; click an option sets preference, closes menu,
+   *  syncs the Profile page select, persists to localStorage. Outside-click + Escape close. */
+  function bindThemeToggle() {
+    const wrap = document.getElementById("themeToggleWrap");
+    const btn = document.getElementById("themeToggleBtn");
+    const menu = document.getElementById("themeToggleMenu");
+    if (!wrap || !btn || !menu) return;
+
+    const setActiveMarker = () => {
+      const pref = (state.preferences && state.preferences.theme) || "light";
+      menu.querySelectorAll("li[data-theme-value]").forEach((li) => {
+        li.classList.toggle("is-active", li.dataset.themeValue === pref);
+        li.setAttribute("aria-selected", li.dataset.themeValue === pref ? "true" : "false");
+      });
+    };
+
+    const openMenu = () => {
+      menu.hidden = false;
+      btn.setAttribute("aria-expanded", "true");
+      setActiveMarker();
+    };
+    const closeMenu = () => {
+      menu.hidden = true;
+      btn.setAttribute("aria-expanded", "false");
+    };
+
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (menu.hidden) openMenu(); else closeMenu();
+    });
+
+    menu.querySelectorAll("li[data-theme-value]").forEach((li) => {
+      li.addEventListener("click", () => {
+        const value = li.dataset.themeValue; // "light" | "dark" | "system"
+        if (state.preferences) state.preferences.theme = value;
+        applyTheme(resolveThemePreference());
+        try { localStorage.setItem("docgpt.theme.user", value); } catch (_) { /* ignore */ }
+        const prefSelect = document.getElementById("prefTheme");
+        if (prefSelect) prefSelect.value = value;
+        closeMenu();
+      });
+    });
+
+    // Outside click closes
+    document.addEventListener("click", (e) => {
+      if (menu.hidden) return;
+      if (!wrap.contains(e.target)) closeMenu();
+    });
+    // Escape closes
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !menu.hidden) { closeMenu(); btn.focus(); }
+    });
+
+    // Keep the ✓ marker in sync if preferences change elsewhere (e.g. Profile page save)
+    setActiveMarker();
+    document.addEventListener("change", (e) => {
+      if (e.target && e.target.id === "prefTheme") setActiveMarker();
+    });
   }
 
   /** v2.0 P1: refresh sidebar user-card display from state.currentUser. Lifted to outer scope so

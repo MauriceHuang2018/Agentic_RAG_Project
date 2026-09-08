@@ -82,6 +82,9 @@ class FakeAgentRunner:
     def __init__(self, result: AgentResult) -> None:
         self._result = result
         self.calls = 0
+        # Per-call kwargs captured so tests can assert the
+        # ChatService threaded the filter through. P0 / 2026-09-03.
+        self.last_acl_filter: Any | None = None
 
     def run(
         self,
@@ -90,8 +93,10 @@ class FakeAgentRunner:
         user_context: dict[str, Any] | None = None,
         conversation_id: str | None = None,
         history=None,
+        acl_filter: Any | None = None,
     ) -> AgentResult:
         self.calls += 1
+        self.last_acl_filter = acl_filter
         return self._result
 
 
@@ -119,8 +124,9 @@ class StubDirectSynth:
     answer: str = "direct-answer"
     calls: int = 0
 
-    def synthesize(self, *, system_prompt, user_prompt, timeout):
+    def synthesize(self, *, system_prompt, user_prompt, timeout, **kwargs):
         self.calls += 1
+        self.last_kwargs = kwargs
         return self.answer
 
 
@@ -468,6 +474,114 @@ def test_direct_path_returns_assistant_answer(fake_session: FakeSession) -> None
     assert resp.steps and resp.steps[0].node == "direct"
 
 
+def test_direct_path_uses_single_stage_fallback_when_no_parents(
+    fake_session: FakeSession,
+) -> None:
+    """When TwoStageSearcher returns 0 parents (is_parent=true filter
+    yields nothing), the searcher falls back to single-stage and
+    populates `children`. ChatService._execute_direct MUST synthesise
+    from those children rather than treating `fallback_triggered=True`
+    as "give up".
+
+    Until 2026-09-04 the indexer only wrote children to Qdrant, so
+    every direct-path query returned empty answer — even though the
+    children themselves were perfectly retrievable via single-stage
+    hybrid search. This test pins the contract: a non-empty child set
+    from `two_stage_search` (whether via the two-stage happy path or
+    via the single-stage fallback) always flows through to synthesis.
+    """
+    from qdrant_client.http import models as qmodels
+
+    sentinel_filter = qmodels.Filter(
+        must=[
+            qmodels.FieldCondition(
+                key="workspace_id", match=qmodels.MatchValue(value="ws-x")
+            )
+        ]
+    )
+    hit = SearchResult(
+        chunk_id="c-fallback",
+        document_id="d-1",
+        content="Platform Analytics helps visualise ServiceNow data.",
+        score=0.62,
+        payload={"document_name": "transcript.pdf", "page": 1},
+    )
+    searcher = FakeSearcher()
+
+    def fake_hybrid(query, *, top_k, score_threshold=None, qdrant_filter=None):
+        searcher.calls.append(
+            {
+                "query": query,
+                "top_k": top_k,
+                "score_threshold": score_threshold,
+                "qdrant_filter": qdrant_filter,
+            }
+        )
+        # Stage 1 (is_parent=true filter) returns no parents — this is
+        # the situation that triggers the single-stage fallback in
+        # TwoStageSearcher.
+        must_keys = {
+            getattr(c, "key", None)
+            for c in (qdrant_filter.must or [])
+        } if qdrant_filter is not None else set()
+        if "is_parent" in must_keys:
+            return []  # no parents → fallback
+        # Single-stage: return the hit.
+        return [hit]
+
+    searcher.hybrid_search = fake_hybrid  # type: ignore[assignment]
+    two_stage = TwoStageSearcher(searcher=searcher, parent_top_k=3, child_top_k=10)
+    svc = ChatService(
+        searcher=searcher,
+        two_stage=two_stage,
+        router=FakeRouter(
+            RouteDecision(route="direct", confidence=0.9, reason="forced", source="test")
+        ),
+        agent_runner=FakeAgentRunner(
+            AgentResult(
+                answer="",
+                citations=[],
+                steps=[],
+                iterations=0,
+                fallback_triggered=False,
+                truncated_by_max_iter=False,
+            )
+        ),
+        long_context=StubLongContext(),
+        memory=FakeMemory(),
+        sensitive_filter=None,
+        masker=None,
+        direct_synthesizer=StubDirectSynth(answer="synthesised answer"),
+    )
+    resp = svc.handle(
+        session=fake_session,
+        request=ChatQueryRequest(query="what is Platform Analytics?"),
+        user_id=uuid.uuid4(),
+        workspace_id=uuid.uuid4(),
+        acl_filter=sentinel_filter,
+    )
+    assert resp.route == "direct"
+    assert resp.answer == "synthesised answer"
+    assert len(resp.citations) == 1
+    assert resp.citations[0].chunk_id == "c-fallback"
+    assert resp.fallback_triggered is True, (
+        "the fallback flag must reach the response so observability "
+        "can distinguish long-context intent from single-stage "
+        "fallback hits"
+    )
+    # Two hybrid_search calls: stage 1 (no parents) + single-stage
+    # fallback. The first carries is_parent filter; the second does not.
+    assert len(searcher.calls) == 2
+    fallback_call = searcher.calls[1]
+    fallback_keys = {
+        getattr(c, "key", None)
+        for c in (fallback_call["qdrant_filter"].must or [])
+    }
+    assert "is_parent" not in fallback_keys, (
+        "single-stage fallback must NOT carry the is_parent filter"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Agent path
 # ---------------------------------------------------------------------------
@@ -785,3 +899,159 @@ def test_agent_path_succeeds_when_plan_emits_dict_detail(
         "compare A with B",
         "summarise findings",
     ]
+
+
+# ---------------------------------------------------------------------------
+# P0 / 2026-09-03: ACL filter threading
+# ---------------------------------------------------------------------------
+
+
+def test_handle_threads_acl_filter_to_agent_path(
+    fake_session: FakeSession, monkeypatch
+) -> None:
+    """ChatService.handle must pass `acl_filter` through to AgentRunner.run.
+
+    Without this, the agent path's retrieve_node queries Qdrant with
+    no filter and returns 0 hits → empty answer (root cause of the
+    2026-09-03 empty-answer bug).
+    """
+    sentinel_filter = object()  # any non-None value works as identity
+    searcher = FakeSearcher()
+    two_stage = TwoStageSearcher(searcher=searcher)
+    runner = FakeAgentRunner(
+        result=AgentResult(
+            answer="agent-answer",
+            citations=[],
+            steps=[],
+            iterations=1,
+            fallback_triggered=False,
+            truncated_by_max_iter=False,
+        )
+    )
+    svc = ChatService(
+        searcher=searcher,
+        two_stage=two_stage,
+        router=FakeRouter(
+            RouteDecision(route="agent", confidence=0.9, reason="forced", source="test")
+        ),
+        agent_runner=runner,
+        long_context=StubLongContext(),
+        memory=FakeMemory(),
+        sensitive_filter=None,
+        masker=None,
+        direct_synthesizer=StubDirectSynth(),
+    )
+    svc.handle(
+        session=fake_session,
+        request=ChatQueryRequest(query="what?"),
+        user_id=uuid.uuid4(),
+        workspace_id=uuid.uuid4(),
+        acl_filter=sentinel_filter,
+    )
+    assert runner.last_acl_filter is sentinel_filter
+
+
+def test_handle_threads_acl_filter_to_direct_path(
+    fake_session: FakeSession, monkeypatch
+) -> None:
+    """ChatService.handle must pass `acl_filter` through to TwoStageSearcher
+    which threads it to SearcherLike.hybrid_search as `qdrant_filter`.
+
+    Same root cause as agent-path test — without the filter, the
+    direct path also returns 0 hits.
+    """
+    # Sentinel filter — must be a real qmodels.Filter because
+    # TwoStageSearcher.two_stage_search AND-combines it with the
+    # parent-filter and reads `.must` / `.should` attributes.
+    from qdrant_client.http import models as qmodels
+
+    sentinel_filter = qmodels.Filter(
+        must=[
+            qmodels.FieldCondition(
+                key="workspace_id",
+                match=qmodels.MatchValue(value="ws-sentinel"),
+            )
+        ]
+    )
+    # Build a SearchResult so the direct path actually synthesizes.
+    hit = SearchResult(
+        chunk_id="c-1",
+        document_id="d-1",
+        content="hello",
+        score=0.9,
+        payload={"document_name": "report.pdf", "page": 2},
+    )
+    searcher = FakeSearcher()
+    # Inject the SearchResult into the hybrid_search output.
+    orig = searcher.hybrid_search
+
+    def fake_hybrid(query, *, top_k, score_threshold=None, qdrant_filter=None):
+        # Verify the filter arrived before we yield any hit. The
+        # two_stage helper AND-combines our sentinel with the
+        # is_parent filter, so we check by identity inside `must`.
+        # Also record the call so the post-call assertion below works.
+        searcher.calls.append(
+            {
+                "query": query,
+                "top_k": top_k,
+                "score_threshold": score_threshold,
+                "qdrant_filter": qdrant_filter,
+            }
+        )
+        assert qdrant_filter is not None
+        must_conditions = list(qdrant_filter.must or [])
+        workspace_cond = next(
+            (
+                c for c in must_conditions
+                if c.key == "workspace_id"
+                and getattr(c.match, "value", None) == "ws-sentinel"
+            ),
+            None,
+        )
+        assert workspace_cond is not None, (
+            f"expected workspace_id MatchValue('ws-sentinel') in must, "
+            f"got {qdrant_filter}"
+        )
+        return [hit]
+
+    searcher.hybrid_search = fake_hybrid  # type: ignore[assignment]
+    two_stage = TwoStageSearcher(searcher=searcher)
+    runner = FakeAgentRunner(
+        result=AgentResult(
+            answer="",
+            citations=[],
+            steps=[],
+            iterations=0,
+            fallback_triggered=False,
+            truncated_by_max_iter=False,
+        )
+    )
+    svc = ChatService(
+        searcher=searcher,
+        two_stage=two_stage,
+        router=FakeRouter(
+            RouteDecision(route="direct", confidence=0.9, reason="forced", source="test")
+        ),
+        agent_runner=runner,
+        long_context=StubLongContext(),
+        memory=FakeMemory(),
+        sensitive_filter=None,
+        masker=None,
+        direct_synthesizer=StubDirectSynth(),
+    )
+    resp = svc.handle(
+        session=fake_session,
+        request=ChatQueryRequest(query="what?"),
+        user_id=uuid.uuid4(),
+        workspace_id=uuid.uuid4(),
+        acl_filter=sentinel_filter,
+    )
+    assert resp.answer == "direct-answer"
+    assert len(resp.citations) == 1
+    # Two-stage fires hybrid_search twice (parents + children); both must
+    # carry the workspace_id filter. The inner assertion in fake_hybrid
+    # enforces this for each call; verify the call count here as a
+    # belt-and-braces check.
+    assert len(searcher.calls) >= 1
+    for call in searcher.calls:
+        assert call["qdrant_filter"] is not None

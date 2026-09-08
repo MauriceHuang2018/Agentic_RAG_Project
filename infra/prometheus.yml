@@ -21,7 +21,7 @@ scrape_configs:
 
 rule_files:
   # Drift Alert rule (T4.4) is loaded from here; file is created in T4.4.
-  - "/etc/prometheus/rules/*.yml"
+  - "/etc/prometheus/rules/*.yaml"
 
 # AlertManager (introduced in prod_launch_drift P0).
 # Prometheus pushes firing alerts here; AM handles deduplication,

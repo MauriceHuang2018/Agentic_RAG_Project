@@ -39,6 +39,7 @@ from agentic_rag_project.rbac.roles import (
     update_role,
 )
 from agentic_rag_project.rbac.seed import (
+    ADMIN_USERNAME,
     BUILTIN_ROLES,
     DEMO_ACME_HQ_ID,
     DEMO_ACME_HQ_NAME,
@@ -52,6 +53,7 @@ from agentic_rag_project.rbac.seed import (
     DEMO_USERNAME,
     PERMISSION_KEYS,
     builtin_role_names,
+    seed_admin_user,
     seed_builtin_roles,
     seed_demo_data,
     seed_demo_user,
@@ -67,6 +69,7 @@ from agentic_rag_project.rbac.status import (
 )
 
 __all__ = [
+    "ADMIN_USERNAME",
     "ALLOWED_STATUSES",
     "AssignmentError",
     "BUILTIN_ROLES",
@@ -96,6 +99,7 @@ __all__ = [
     "list_roles",
     "list_user_roles",
     "list_workspace_members",
+    "seed_admin_user",
     "seed_builtin_roles",
     "seed_demo_data",
     "seed_demo_user",

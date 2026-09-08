@@ -1,0 +1,206 @@
+/*
+ * PlanA v1.0 Design Tokens — single source of truth for src/web/.
+ * Values mirror demo2/visual baseline (cold gray + blue, Inter sans, 1px hairline).
+ * Light theme only; dark mode deferred. See docs/原型设计/tokens-planA.md for spec.
+ *
+ * Structure:
+ *   :root              — PlanA token set (surface / border / text / accent / spacing / radius / shadow / type / layout / motion / signature)
+ *   :root (EP override) — Element Plus 2.8 theme override (--el-* vars + component fallbacks)
+ */
+
+/* ── Section 1: PlanA tokens ─────────────────────────────────────────────── */
+:root {
+  /* Surface */
+  --bg: #FAFAFA;                /* page background, only one */
+  --surface-1: #FFFFFF;          /* cards / dialogs / drawers */
+  --surface-2: #F3F4F6;          /* hover / pressed / secondary surface */
+  --surface-overlay: rgba(17, 24, 39, 0.32); /* modal backdrop */
+
+  /* Border */
+  --border: #E5E7EB;             /* 1px hairline, default */
+  --border-strong: #D1D5DB;      /* emphasized, hover */
+
+  /* Text */
+  --text-1: #111827;             /* primary */
+  --text-2: #4B5563;             /* secondary */
+  --text-3: #9CA3AF;             /* tertiary / placeholder / label */
+  --text-inverse: #FFFFFF;       /* on dark / accent backgrounds */
+
+  /* Accent */
+  --accent: #2563EB;             /* only primary accent */
+  --accent-strong: #1D4ED8;      /* hover / pressed */
+  --accent-soft: #DBEAFE;        /* selected/soft hover bg */
+
+  /* Semantic */
+  --ok: #059669;
+  --warn: #D97706;
+  --err: #DC2626;
+  --info: #3B82F6;
+
+  /* Spacing (4px base) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+
+  /* Radius (disciplined, no pill) */
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+
+  /* Shadow — only two, very weak */
+  --shadow-card: 0 1px 3px rgba(17, 24, 39, 0.06);
+  --shadow-popover: 0 8px 24px rgba(17, 24, 39, 0.12);
+
+  /* Typography */
+  --font-display: 'Inter', 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  --font-body: 'Inter', 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, ui-monospace, monospace;
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-15: 15px;
+  --fs-16: 16px;
+  --fs-18: 18px;
+  --fs-22: 22px;
+  --lh-tight: 1.2;
+  --lh-base: 1.5;
+  --lh-loose: 1.7;
+  --ls-display: -0.02em;
+  --ls-number: -0.03em;
+
+  /* Layout */
+  --topbar-h: 56px;
+  --sidebar-w: 288px;            /* chat left column */
+  --drawer-w: 360px;
+  --sidebar-bottom-h: 188px;
+  --page-max-w: 1440px;
+
+  /* Motion */
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-slow: 240ms;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Z-index */
+  --z-base: 1;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-drawer: 1000;
+  --z-dialog: 1100;
+  --z-tooltip: 1200;
+
+  /* Signature shorthands */
+  --hairline: 1px solid var(--border);
+  --cite-edge: 3px solid var(--accent);
+  --cite-bg: var(--surface-1);
+
+  /* Transition shorthand */
+  --transition-fast: var(--motion-fast) ease;
+  --transition-base: var(--motion-base) ease;
+}
+
+/* ── Section 2: Element Plus 2.8 theme override ─────────────────────────── */
+/* Override EP default blue (#409EFF) → planA accent (#2563EB). Covers
+ * el-button / el-select / el-radio-button / el-tabs / el-pagination etc. */
+:root {
+  /* Primary scale */
+  --el-color-primary: #2563EB;
+  --el-color-primary-light-3: #3B82F6;
+  --el-color-primary-light-5: #60A5FA;
+  --el-color-primary-light-7: #93C5FD;
+  --el-color-primary-light-8: #BFDBFE;
+  --el-color-primary-light-9: #DBEAFE;
+  --el-color-primary-dark-2: #1D4ED8;
+
+  /* Border scale */
+  --el-border-color: #E5E7EB;
+  --el-border-color-light: #F3F4F6;
+  --el-border-color-lighter: #F9FAFB;
+  --el-border-color-extra-light: #F9FAFB;
+  --el-border-color-dark: #D1D5DB;
+  --el-border-color-darker: #9CA3AF;
+
+  /* Text scale */
+  --el-text-color-primary: #111827;
+  --el-text-color-regular: #4B5563;
+  --el-text-color-secondary: #6B7280;
+  --el-text-color-placeholder: #9CA3AF;
+  --el-text-color-disabled: #9CA3AF;
+
+  /* Background scale */
+  --el-bg-color: #FFFFFF;
+  --el-bg-color-page: #FAFAFA;
+  --el-bg-color-overlay: #FFFFFF;
+
+  /* Radius */
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 6px;
+  --el-border-radius-round: 6px;
+
+  /* Padding */
+  --el-padding-xs: 4px;
+  --el-padding-sm: 8px;
+  --el-padding-md: 12px;
+  --el-padding-lg: 16px;
+
+  /* Fill / text on primary */
+  --el-color-white: #FFFFFF;
+  --el-color-black: #000000;
+  --el-fill-color: #F3F4F6;
+  --el-fill-color-light: #F9FAFB;
+  --el-fill-color-lighter: #F9FAFB;
+  --el-fill-color-blank: #FFFFFF;
+
+  /* Disabled state */
+  --el-disabled-bg-color: #F3F4F6;
+  --el-disabled-text-color: #9CA3AF;
+  --el-disabled-border-color: #E5E7EB;
+}
+
+/* Element Plus component-level fallbacks — covers internals not driven by EP tokens */
+.el-button { border-radius: var(--r-sm); font-family: var(--font-body); }
+.el-button--primary { background: var(--accent); border-color: var(--accent); }
+.el-button--primary:hover,
+.el-button--primary:focus { background: var(--accent-strong); border-color: var(--accent-strong); }
+.el-button--primary.is-disabled,
+.el-button--primary.is-disabled:hover { background: var(--accent); border-color: var(--accent); opacity: 0.4; }
+
+.el-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-card); }
+.el-dialog { background: var(--surface-1); border-radius: var(--r-lg); box-shadow: var(--shadow-popover); }
+.el-dialog__header { padding: var(--s-5) var(--s-6) var(--s-3); }
+.el-dialog__title { font-family: var(--font-display); font-size: var(--fs-18); font-weight: 600; letter-spacing: var(--ls-display); color: var(--text-1); }
+.el-dialog__body { padding: var(--s-3) var(--s-6) var(--s-5); }
+.el-dialog__footer { padding: var(--s-3) var(--s-6) var(--s-5); border-top: var(--hairline); }
+
+.el-input__wrapper { background: var(--surface-1); border-radius: var(--r-sm); box-shadow: 0 0 0 1px var(--border) inset; }
+.el-input__wrapper.is-focus { box-shadow: 0 0 0 1px var(--accent) inset; }
+.el-textarea__inner { background: var(--surface-1); border-radius: var(--r-sm); font-family: var(--font-body); }
+.el-textarea__inner:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-soft); }
+
+.el-tag { border-radius: var(--r-sm); font-family: var(--font-mono); font-size: var(--fs-12); }
+
+.el-drawer { border-radius: var(--r-lg); }
+.el-drawer__header { padding: var(--s-4) var(--s-5); font-family: var(--font-display); font-size: var(--fs-18); font-weight: 600; letter-spacing: var(--ls-display); border-bottom: var(--hairline); }
+.el-drawer__body { padding: var(--s-4) var(--s-5); background: var(--bg); }
+
+.el-radio-button__inner { border-radius: var(--r-sm); }
+
+/* el-select dropdown: ensure selected item follows planA accent */
+.el-select-dropdown__item.is-selected { color: var(--accent-strong); }
+.el-select-dropdown__item.is-selected:hover { background: var(--accent-soft); }
+.el-select-dropdown__item.is-hovering { background: var(--surface-2); }
+
+.el-alert { border-radius: var(--r-md); }
+.el-alert--warning { background: var(--accent-soft); border-color: var(--accent); color: var(--text-1); }
+
+.el-message { border-radius: var(--r-md); }
+
+.el-dropdown-menu { border-radius: var(--r-md); box-shadow: var(--shadow-popover); }
+.el-dropdown-menu__item.is-selected { color: var(--accent-strong); }
+.el-dropdown-menu__item:not(.is-disabled):hover { background: var(--surface-2); }

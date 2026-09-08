@@ -243,39 +243,44 @@ watch(
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: #fff;
+  background: var(--bg);
 }
 .chat-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 24px;
-  border-bottom: 1px solid #ebeef5;
-  background: #fafbfc;
+  padding: var(--s-5) var(--s-8) var(--s-4);
+  border-bottom: var(--hairline);
+  background: var(--bg);
 }
 .chat-header-left,
 .chat-header-right {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--s-4);
 }
 .chat-title {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--fs-22);
   font-weight: 600;
+  letter-spacing: var(--ls-display);
+  color: var(--text-1);
 }
 .chat-user {
-  font-size: 14px;
-  color: #606266;
+  font-size: var(--fs-14);
+  color: var(--text-2);
 }
 .chat-body {
   flex: 1;
   display: flex;
   min-height: 0;
+  background: var(--bg);
 }
 .chat-sidebar {
-  width: 280px;
+  width: 288px;
   flex-shrink: 0;
+  background: var(--surface-1);
+  border-right: var(--hairline);
 }
 .chat-main {
   flex: 1;
@@ -285,14 +290,21 @@ watch(
 }
 .chat-messages {
   flex: 1;
-  padding: 16px 24px;
+  padding: var(--s-6) var(--s-8);
+  scroll-behavior: smooth;
 }
 .chat-empty {
-  margin: 24px;
+  margin: var(--s-6);
+}
+.chat-empty :deep(.el-alert) {
+  border-radius: var(--r-md);
 }
 .chat-messages-inner {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--s-4);
+  max-width: 820px;
+  margin: 0 auto;
+  width: 100%;
 }
 </style>

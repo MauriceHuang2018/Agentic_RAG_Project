@@ -25,8 +25,12 @@ from agentic_rag_project.db.models.documents import Document
 from agentic_rag_project.db.session import _session_factory
 from agentic_rag_project.doc_processor.celery_app import celery_app
 from agentic_rag_project.doc_processor.embedder import LiteLLMEmbedder
-from agentic_rag_project.doc_processor.parser import DeepDocClient
+from agentic_rag_project.doc_processor.parser import (
+    DeepDocClient,
+    parse_document_with_router,
+)
 from agentic_rag_project.doc_processor.storage import resolve_document_file
+from agentic_rag_project.doc_processor.visual_router import DeepDocVisualRouter
 
 logger = logging.getLogger(__name__)
 
@@ -45,18 +49,26 @@ def _open_session() -> Session:
     return _session_factory()()
 
 
-def _update_document_status(document_id: str, status: str, error: str | None = None) -> None:
-    """Flip the Document.status field for the given UUID (string form)."""
+def _update_document_status(document_id: str, status: str, error: str | None = None) -> Document | None:
+    """Flip the Document.status field for the given UUID (string form).
+
+    Returns the loaded `Document` so callers can read derived fields
+    (notably `workspace_id` — needed by `parse_document_task` to
+    thread through the doc-processor pipeline). Returns None if
+    the document vanished between scheduling and dispatch
+    (legitimate in tests with monkey-patched storage).
+    """
     session = _open_session()
     try:
         doc = session.get(Document, document_id)
         if doc is None:
             logger.warning("document %s vanished before status update", document_id)
-            return
+            return None
         doc.status = status
         if error is not None:
             doc.metadata_ = {**(doc.metadata_ or {}), "last_error": error}
         session.commit()
+        return doc
     except Exception:
         session.rollback()
         raise
@@ -77,11 +89,27 @@ def parse_document_task(self: Any, document_id: str) -> dict[str, Any]:
     """Async pipeline: load -> parse -> chunk -> embed -> index -> ready."""
     settings = get_settings()
     logger.info("parse_document_task starting for %s", document_id)
-    _update_document_status(document_id, "processing")
+    doc = _update_document_status(document_id, "processing")
+    if doc is None:
+        # Document vanished — nothing to process; Celery's autoretry
+        # policy decides whether to retry the whole task.
+        raise RuntimeError(f"document {document_id} not found")
 
     try:
         file_path = resolve_document_file(document_id)
-        parser = DeepDocClient()
+        # Parse via the format dispatcher (DESIGN §2.5) — structured
+        # formats use in-process extractors and never touch DeepDoc;
+        # only scanned PDFs are routed through the visual path. The
+        # legacy `client.parse()` entrypoint is bypassed because it
+        # fell back to a RapidOCR path that imports cv2 — broken in
+        # this image since libxcb.so.1 is missing (diag 2026-09-03).
+        # `fallback_ocr=False` makes scanned-PDF failures hard-fail
+        # rather than silently retry into the same broken path.
+        deepdoc = DeepDocClient()
+        visual_router = DeepDocVisualRouter(
+            deepdoc,
+            fallback_ocr=False,
+        )
         embedder = LiteLLMEmbedder()
         qdrant = _build_qdrant_client()
         session = _open_session()
@@ -92,13 +120,21 @@ def parse_document_task(self: Any, document_id: str) -> dict[str, Any]:
                 file_path=file_path,
                 qdrant=qdrant,
                 session=session,
-                parser=parser,
+                parser_router=lambda p: parse_document_with_router(
+                    p,
+                    visual_router=visual_router,
+                ),
                 embedder=embedder,
                 collection=settings.qdrant_collection,
                 document_id=document_id,
+                # P0 / 2026-09-03: thread the parent document's
+                # workspace_id into the pipeline so every emitted
+                # chunk (PG row + Qdrant payload) carries it. Without
+                # this, ACL filters have nothing to scope on.
+                workspace_id=str(doc.workspace_id),
             )
         finally:
-            parser.close()
+            deepdoc.close()
             embedder.close()
             session.close()
     except (httpx.HTTPError, OSError, RuntimeError) as exc:

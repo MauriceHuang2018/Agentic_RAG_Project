@@ -80,7 +80,15 @@ services:
     volumes:
       - ./data/qdrant:/qdrant/storage
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/healthz | grep -q ok"]
+      # qdrant/qdrant:latest ships neither wget, curl, nc nor python — only
+      # bash. The previous wget healthcheck failed on every interval
+      # (FailingStreak=8 on diag 2026-09-03), which kept `celery-worker`
+      # from starting because of depends_on: service_healthy. Use bash's
+      # built-in /dev/tcp pseudo-device + grep on the response body.
+      # (H3 healthcheck false-positive — same root cause as api-gateway,
+      # which `python -m agentic_rag_project` doesn't suffer since the
+      # rag-api image is python:3.11-slim. Closed 2026-09-03.)
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/6333 && printf \"GET /healthz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && grep -q \"healthz check passed\" <&3'"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -103,7 +111,7 @@ services:
       Ali_API_BASE_URL: ${Ali_API_BASE_URL:?Ali_API_BASE_URL required}
       # Ali_EMBEDDING_BASE_URL: ${Ali_EMBEDDING_BASE_URL}
       # Workspace ID for DashScope embedding model (qwen3.7-text-embedding)
-      # DASHSCOPE_WORKSPACE_ID: ${DASHSCOPE_WORKSPACE_ID}
+      DASHSCOPE_WORKSPACE_ID: ${DASHSCOPE_WORKSPACE_ID:?DASHSCOPE_WORKSPACE_ID required}
       LITELLM_MASTER_KEY: ${LITELLM_API_KEY:?LITELLM_API_KEY required}
       LITELLM_CONFIG_PATH: /app/config.yaml
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
@@ -114,7 +122,17 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD required}
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health/liveliness || exit 1"]
+      # ghcr.io/berriai/litellm:main-stable ships neither wget, curl, nc nor
+      # python — only bash. The previous wget healthcheck failed on every
+      # interval (FailingStreak=35 on diag 2026-09-03), which kept
+      # `celery-worker` from starting because of depends_on: service_healthy.
+      # Use bash's built-in /dev/tcp pseudo-device; verify the response
+      # body contains "I'm alive!" (the proxy's own liveliness sentinel).
+      # Note `CMD-SHELL` runs under `/bin/sh` — must wrap in explicit
+      # `bash -c '...'` since dash does NOT implement /dev/tcp.
+      # (H3 healthcheck false-positive — closed 2026-09-03 alongside the
+      # qdrant + api-gateway fixes.)
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/4000 && printf \"GET /health/liveliness HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && grep -q \"I'\\''m alive\" <&3'"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -195,6 +213,14 @@ services:
       # /v1/embeddings endpoint via httpx with the bare name in the JSON
       # body, no `provider/` prefix needed.
       LITELLM_EMBEDDING_MODEL: text-embedding-v4
+      # Classifier budget — feeds into LLMClassifier(timeout_seconds=...)
+      # at module construction. docker compose does NOT auto-inject .env
+      # vars that aren't referenced here, so we MUST wire this through
+      # for the .env override to reach the container. Default 30s
+      # accommodates qwen3.7-plus reasoning-mode + the long classifier
+      # system prompt; 10s was too tight and surfaced as APITimeoutError
+      # → keyword fallback → empty /chat/query answer (diag 2026-09-03).
+      ROUTER_CLASSIFIER_TIMEOUT_SECONDS: ${ROUTER_CLASSIFIER_TIMEOUT_SECONDS:-30}
       # DeepDoc Server (independent LitServe, port 9390) — only consulted by
       # the visual_router for scanned PDFs and standalone images.
       RAGFLOW_BASE_URL: http://ragflow-deepdoc:9390
@@ -215,7 +241,18 @@ services:
         condition: service_healthy
     command: ["python", "-m", "agentic_rag_project"]
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/health | grep -q ok"]
+      # python:3.11-slim ships NEITHER wget NOR curl, so the prior
+      # `wget -qO- ... | grep` form exited 127 ("wget: not found")
+      # on every interval (FailingStreak=80+ on diag 2026-09-03),
+      # which kept `celery-worker` / `celery-beat` from starting
+      # via `depends_on: service_healthy`. Use bash's built-in
+      # /dev/tcp pseudo-device + grep on the response payload. Note
+      # `CMD-SHELL` runs the command under `/bin/sh`, NOT `bash`,
+      # so the inner `/dev/tcp/...` redirect MUST be wrapped in an
+      # explicit `bash -c '...'` — dash (the typical /bin/sh) does
+      # not implement /dev/tcp at all. (H3 healthcheck false-positive
+      # — closed 2026-09-03 alongside the qdrant + litellm fixes.)
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/8000 && printf \"GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && grep -q \"\\\"status\\\":\\\"ok\\\"\" <&3'"]
       interval: 15s
       timeout: 5s
       retries: 5

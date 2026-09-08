@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
+from typing import Callable
 
 from qdrant_client import QdrantClient
 from sqlalchemy.orm import Session
@@ -42,6 +43,7 @@ from agentic_rag_project.doc_processor.parser import (
     DeepDocClient,
     ParserError,
     parse_document as _parse_document,
+    parse_document_with_router,
 )
 
 __all__ = [
@@ -74,17 +76,31 @@ class DocProcessor:
 
     All dependencies are injectable so unit tests can pass fakes for
     the DeepDoc client, embedder, Qdrant client, and PG session.
+
+    Parser injection has two compatible shapes:
+
+    * ``parser=DeepDocClient(...)`` — legacy path. Calls ``client.parse()``
+      on every file. Still the right choice for tests that subclass
+      ``DeepDocClient`` to override ``parse()`` (see
+      ``tests/test_doc_processor.py::FakeParser``).
+    * ``parser_router=parse_document_with_router`` — the format
+      dispatcher introduced in parser_router (DESIGN §2.5). Routes by
+      extension; structured formats use in-process extractors and only
+      scanned PDFs hit the visual path. Takes precedence over ``parser``
+      when both are supplied.
     """
 
     def __init__(
         self,
         *,
         parser: DeepDocClient | None = None,
+        parser_router: Callable[[str | Path], ParsedDoc] | None = None,
         embedder: LiteLLMEmbedder | None = None,
         qdrant: QdrantClient | None = None,
         collection: str | None = None,
     ) -> None:
         self._parser = parser or DeepDocClient()
+        self._parser_router = parser_router
         self._embedder = embedder or LiteLLMEmbedder()
         self._qdrant = qdrant
         self._collection = collection
@@ -95,22 +111,35 @@ class DocProcessor:
         *,
         session: Session,
         document_id: str | None = None,
+        workspace_id: str,
     ) -> IndexResult:
         """End-to-end: file → parents + embedded children → Qdrant + PG.
 
         Caller owns the SQLAlchemy session's lifecycle (commit / rollback).
+        `workspace_id` is required (no default) — every emitted chunk
+        (ParentChunk / ChildChunk / EmbeddedChunk / PG row / Qdrant
+        payload) carries it so the chat ACL filter can scope retrieval.
+        P0 / 2026-09-03 — see docs/workspace_id_pipeline/.
         """
         if self._qdrant is None:
             raise ValueError("DocProcessor requires a QdrantClient")
         doc_id = document_id or str(uuid.uuid4())
-        parsed = _parse_document(file_path, self._parser)
-        parents, children = chunk_parsed_doc(parsed, doc_id)
+        # Prefer the parser_router (format dispatcher) when injected; fall
+        # back to the legacy DeepDocClient.parse() path otherwise. The router
+        # path is what celery workers use post-2026-09-04; the legacy path
+        # stays for unit tests that subclass DeepDocClient.
+        if self._parser_router is not None:
+            parsed = self._parser_router(file_path)
+        else:
+            parsed = _parse_document(file_path, self._parser)
+        parents, children = chunk_parsed_doc(parsed, doc_id, workspace_id)
         if not children:
             logger.warning("document %s produced no children — nothing to index", doc_id)
             return index(
                 parents=parents,
                 embedded=[],
                 document_id=doc_id,
+                workspace_id=workspace_id,
                 qdrant=self._qdrant,
                 session=session,
                 collection=self._collection,
@@ -120,6 +149,7 @@ class DocProcessor:
             parents=parents,
             embedded=embedded,
             document_id=doc_id,
+            workspace_id=workspace_id,
             qdrant=self._qdrant,
             session=session,
             collection=self._collection,
@@ -141,13 +171,37 @@ def process_document(
     qdrant: QdrantClient,
     session: Session,
     parser: DeepDocClient | None = None,
+    parser_router: Callable[[str | Path], ParsedDoc] | None = None,
     embedder: LiteLLMEmbedder | None = None,
     collection: str | None = None,
     document_id: str | None = None,
+    workspace_id: str,
 ) -> IndexResult:
-    """Module-level one-shot wrapper around DocProcessor.process()."""
-    proc = DocProcessor(parser=parser, embedder=embedder, qdrant=qdrant, collection=collection)
+    """Module-level one-shot wrapper around DocProcessor.process().
+
+    `workspace_id` is required (no default). It threads through to the
+    chunker, embedder, and indexer so every emitted chunk — both the
+    PG `chunks` row and the Qdrant payload — carries it. The chat
+    ACL filter relies on this field being set on every retrievable
+    chunk (P0 / 2026-09-03).
+
+    Pass `parser_router` to route by extension through the format
+    dispatcher; otherwise the legacy `parser.parse()` path is used
+    (preserved for FakeParser-based unit tests).
+    """
+    proc = DocProcessor(
+        parser=parser,
+        parser_router=parser_router,
+        embedder=embedder,
+        qdrant=qdrant,
+        collection=collection,
+    )
     try:
-        return proc.process(file_path, session=session, document_id=document_id)
+        return proc.process(
+            file_path,
+            session=session,
+            document_id=document_id,
+            workspace_id=workspace_id,
+        )
     finally:
         proc.close()

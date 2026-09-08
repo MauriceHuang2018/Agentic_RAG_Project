@@ -46,6 +46,7 @@ def _flush_child(
     buffer: list[ContentBlock],
     parent_id: str,
     document_id: str,
+    workspace_id: str,
 ) -> ChildChunk | None:
     """Combine buffered blocks into a single ChildChunk."""
     if not buffer:
@@ -56,6 +57,7 @@ def _flush_child(
         return None
     return ChildChunk(
         document_id=document_id,
+        workspace_id=workspace_id,
         parent_id=parent_id,
         content=text,
         block_kind=buffer[0].kind,
@@ -67,6 +69,7 @@ def _split_section_into_children(
     section: ParsedSection,
     parent_id: str,
     document_id: str,
+    workspace_id: str,
     max_chars: int,
 ) -> list[ChildChunk]:
     """Greedy char-budget chunker for one section."""
@@ -76,7 +79,7 @@ def _split_section_into_children(
 
     def flush() -> None:
         nonlocal buffer_len
-        child = _flush_child(buffer, parent_id, document_id)
+        child = _flush_child(buffer, parent_id, document_id, workspace_id)
         if child is not None:
             children.append(child)
         buffer.clear()
@@ -92,6 +95,7 @@ def _split_section_into_children(
             children.append(
                 ChildChunk(
                     document_id=document_id,
+                    workspace_id=workspace_id,
                     parent_id=parent_id,
                     content=block.text or f"[{block.kind}]",
                     block_kind=block.kind,
@@ -116,6 +120,7 @@ def _split_section_into_children(
 def chunk_parsed_doc(
     parsed: ParsedDoc,
     document_id: str,
+    workspace_id: str,
     child_max_chars: int = DEFAULT_CHILD_MAX_CHARS,
     parent_max_chars: int = DEFAULT_PARENT_MAX_CHARS,
 ) -> tuple[list[ParentChunk], list[ChildChunk]]:
@@ -123,6 +128,12 @@ def chunk_parsed_doc(
 
     Returns ``(parents, children)``. ``parent.child_ids`` are filled in
     so downstream consumers can build the parent_id index in Qdrant.
+
+    `workspace_id` is required (no default) — every emitted chunk
+    carries it, and the indexer mirrors it onto both the PG row
+    (chunks.workspace_id) and the Qdrant payload so the chat ACL
+    filter can scope retrieval without a second hop back to PG.
+    P0 / 2026-09-03 — see docs/workspace_id_pipeline/.
     """
     parents: list[ParentChunk] = []
     children: list[ChildChunk] = []
@@ -133,6 +144,7 @@ def chunk_parsed_doc(
         # is a future enhancement; for MVP we keep 1:1 section:parent.
         parent = ParentChunk(
             document_id=document_id,
+            workspace_id=workspace_id,
             content=_section_text(section),
             section_heading=section.heading,
             page_start=section.page_start,
@@ -142,6 +154,7 @@ def chunk_parsed_doc(
             section=section,
             parent_id=parent.chunk_id,
             document_id=document_id,
+            workspace_id=workspace_id,
             max_chars=child_max_chars,
         )
         parent.child_ids = [c.chunk_id for c in section_children]

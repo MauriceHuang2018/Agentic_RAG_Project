@@ -32,23 +32,31 @@ export function useChatStream() {
     abortController?.abort();
     abortController = new AbortController();
 
-    const userMsg: ChatMessage = {
+    // IMPORTANT (2026-09-06): wrap both messages with `reactive(...)` so the
+    // closure reference IS the reactive proxy. `messages.push(plainObj)`
+    // stores the raw object as-is (Vue's `push` instrumentation calls
+    // `toRaw(self).push` directly — see @vue/reactivity arrayInstrumentations),
+    // so the only way the closure's later mutations (`assistantMsg.content +=`
+    // and the `streaming = false` / id / citations assignments) propagate to
+    // the template is to make the closure object itself the proxy. Without
+    // this, the chat bubble shows "..." forever with a 200 OK response.
+    const userMsg = reactive<ChatMessage>({
       id: `user-${Date.now()}`,
       role: 'user',
       content: query,
       citations: [],
       timestamp: Date.now(),
-    };
+    });
     messages.push(userMsg);
 
-    const assistantMsg: ChatMessage = {
+    const assistantMsg = reactive<ChatMessage>({
       id: `assistant-${Date.now()}`,
       role: 'assistant',
       content: '',
       citations: [],
       timestamp: Date.now(),
       streaming: true,
-    };
+    });
     messages.push(assistantMsg);
 
     isStreaming.value = true;
@@ -69,8 +77,40 @@ export function useChatStream() {
         assistantMsg.content += chunk.delta;
       }
       if (final) {
-        assistantMsg.id = final.messageId;
-        assistantMsg.citations = final.citations;
+        // Backfill: if `streamChat` never yielded any delta chunks (e.g.
+        // answer arrived in a single late burst, signal aborted early,
+        // or generator skipped straight to the `done` payload) the
+        // bubble would otherwise render the loading dots forever —
+        // verified manually 2026-09-04 with a 43-second answer that
+        // reached the bubble as a single done-payload. Prefer
+        // `final.answer` so the UI is never stuck mid-stream.
+        if (!assistantMsg.content && final.answer) {
+          assistantMsg.content = final.answer;
+        }
+        // Backend Pydantic schema uses snake_case (see chat/schema.py).
+        // The TS-side `ChatQueryResponse` / `CitationItem` interfaces
+        // declared camelCase historically, but the runtime payload is
+        // snake_case — read `_id` first, fall back to the camelCase
+        // alias if some caller has already normalised it.
+        //
+        // Citation fields go one step further: we MAP every entry into
+        // a fresh camelCase object so downstream consumers
+        // (FeedbackModal.vue:110 reads `c.chunkId`,
+        // CitationDrawer.vue:23 reads `c.chunkId`) get the shape they
+        // expect without each consumer re-implementing the fallback.
+        // One normalization point here closes the bug class — verified
+        // 2026-09-07 when POST /feedback surfaced 422
+        // (string_type) on retrieved_chunks because the frontend
+        // mapped `undefined` for all 5 chunk ids.
+        const messageId = (final as any).message_id ?? final.messageId;
+        assistantMsg.id = messageId;
+        const rawCitations = final.citations ?? (final as any).citations ?? [];
+        assistantMsg.citations = (rawCitations as any[]).map((c) => ({
+          chunkId: c.chunk_id ?? c.chunkId ?? '',
+          documentName: c.document_name ?? c.documentName ?? '',
+          pageNo: c.page_no ?? c.pageNo ?? null,
+          relevanceScore: c.relevance_score ?? c.relevanceScore ?? 0,
+        }));
         assistantMsg.response = final;
       }
       assistantMsg.streaming = false;

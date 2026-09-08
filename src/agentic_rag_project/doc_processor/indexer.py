@@ -94,6 +94,7 @@ def _write_chunks_row(
     *,
     chunk_id: str,
     document_id: uuid.UUID,
+    workspace_id: uuid.UUID,
     parent_chunk_id: uuid.UUID | None,
     content: str,
     chunk_index: int,
@@ -106,9 +107,16 @@ def _write_chunks_row(
     Idempotent on the deterministic PK (``_chunk_uuid(chunk_id)``): a
     second call for the same chunk_id updates content/content_hash/
     position in place instead of appending a duplicate row. Identity
-    fields (``document_id``, ``parent_chunk_id``, ``is_parent``,
-    ``chunk_index``) are preserved from the existing row when present
-    — they are set on first insert and do not change on reindex.
+    fields (``document_id``, ``workspace_id``, ``parent_chunk_id``,
+    ``is_parent``, ``chunk_index``) are preserved from the existing
+    row when present — they are set on first insert and do not
+    change on reindex.
+
+    `workspace_id` is added as an identity field (P0 / 2026-09-03).
+    A chunk's workspace is fixed at first index time and never
+    changes on reindex — moving a document across workspaces is a
+    separate operation that goes through a dedicated migration
+    (out of scope here).
     """
     row_id = _chunk_uuid(chunk_id)
     content_hash = _content_hash(content)
@@ -117,6 +125,7 @@ def _write_chunks_row(
     insert_values = {
         "id": row_id,
         "document_id": document_id,
+        "workspace_id": workspace_id,
         "parent_chunk_id": parent_chunk_id,
         "chunk_index": chunk_index,
         "content": content,
@@ -125,9 +134,10 @@ def _write_chunks_row(
         "position": position,
     }
     # On conflict: refresh content-derived fields only. Identity fields
-    # (document_id, parent_chunk_id, is_parent, chunk_index) keep their
-    # original value — reindexing the same chunk must not change which
-    # document/parent it belongs to or its position in the chunk list.
+    # (document_id, workspace_id, parent_chunk_id, is_parent,
+    # chunk_index) keep their original value — reindexing the same
+    # chunk must not change which document/parent/workspace it
+    # belongs to or its position in the chunk list.
     stmt = pg_insert(Chunk).values(**insert_values)
     stmt = stmt.on_conflict_do_update(
         index_elements=[Chunk.id],
@@ -145,6 +155,7 @@ def index(
     parents: list[ParentChunk],
     embedded: list[EmbeddedChunk],
     document_id: str,
+    workspace_id: str,
     qdrant: QdrantClient,
     session: Session,
     collection: str | None = None,
@@ -154,12 +165,26 @@ def index(
     Parents are stored as PG rows only (no vector) — the two-stage
     retrieval path joins back to PG by parent_id. Children carry both
     a dense and sparse vector and are the unit of retrieval.
+
+    `workspace_id` is threaded through to every PG row written here
+    and was already on the Qdrant payload via EmbeddedChunk.payload
+    (set by LiteLLMEmbedder.embed_chunks). Both stores therefore have
+    workspace_id set on every chunk, which the chat ACL filter
+    reads at retrieval time. P0 / 2026-09-03.
     """
     settings = get_settings()
     coll = collection or settings.qdrant_collection
     ensure_collection(qdrant, coll)
 
-    doc_uuid = _chunk_uuid(document_id)
+    # `document_id` here is the canonical Document row UUID returned by
+    # the upload endpoint (the FK target on `chunks.document_id`). It
+    # MUST be the literal UUID, not a hash of it — `_chunk_uuid` would
+    # re-hash the string into a different v5 UUID that doesn't exist in
+    # `documents`, breaking the FK and causing retry storms.
+    # (Bug surfaced 2026-09-04: P0 wiring forwarded `document_id` from
+    # Celery unchanged, but indexer.apply_uuid5() shadowed it.)
+    doc_uuid = uuid.UUID(document_id)
+    ws_uuid = uuid.UUID(workspace_id)
 
     # 1. upsert children into Qdrant
     points = [_build_point(e) for e in embedded]
@@ -179,6 +204,7 @@ def index(
                 session,
                 chunk_id=parent.chunk_id,
                 document_id=doc_uuid,
+                workspace_id=ws_uuid,
                 parent_chunk_id=None,
                 content=parent.content,
                 chunk_index=parent_index,
@@ -196,6 +222,7 @@ def index(
                 session,
                 chunk_id=child.chunk_id,
                 document_id=doc_uuid,
+                workspace_id=ws_uuid,
                 parent_chunk_id=parent_uuid,
                 content=child.content,
                 chunk_index=len(parents) + child_index,

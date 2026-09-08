@@ -32,6 +32,7 @@ from agentic_rag_project.api_gateway.dependencies import (
     get_current_user,
     get_query_guardrail,
 )
+from agentic_rag_project.acl_filter import build_user_filter
 from agentic_rag_project.audit import AuditEvent, AuditService
 from agentic_rag_project.chat import (
     ChatQueryRequest,
@@ -127,6 +128,13 @@ def post_chat_query(
     flows through to `ChatService.handle`.
     """
     workspace_id = _resolve_workspace_id(ctx, payload.workspace_id, session)
+    # P0 / 2026-09-03: build the Qdrant pre-filter from the caller's
+    # permissions. Built here (router layer) rather than inside
+    # ChatService so the filter sees the FRESH session + ctx, not
+    # whatever the singleton service cached at construction time.
+    # Without this filter, both the direct path (TwoStageSearcher)
+    # and the agent path (AgentRunner) return 0 hits → empty answer.
+    acl_filter = build_user_filter(ctx, session)
     # R13 — chat_router 入口第一行 QueryGuardrail.check
     guardrail_result = guardrail.check(payload.query or "")
     if not guardrail_result.allowed:
@@ -162,6 +170,7 @@ def post_chat_query(
             user_id=ctx.user_id,
             workspace_id=workspace_id,
             default_conversation_title=payload.query[:60],
+            acl_filter=acl_filter,
         )
         # Map response → label values for the L1 histogram/counter.
         # We observe latency *once*, with the real labels, here.

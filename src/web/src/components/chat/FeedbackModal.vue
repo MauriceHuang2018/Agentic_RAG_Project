@@ -111,19 +111,49 @@ async function onSubmit(): Promise<void> {
     });
     emit('submitted');
     emit('update:visible', false);
-  } catch (err) {
-    ElMessage.error((err as { message?: string }).message ?? 'Submit failed');
+  } catch {
+    // IMPORTANT (2026-09-07): do NOT show a toast here. The composable's
+    // catch already assigns `error.value` to a NormalizedError; the
+    // `watch(error)` below is the single source of truth for surfacing
+    // the toast. Showing it twice here was the "two error toasts" bug
+    // the user reported 2026-09-07.
   }
 }
 
-// Surface submit error inline.
+// Surface submit error inline — single source of truth for the toast.
+// `error` is now a NormalizedError (2026-09-07 fix); read `.message`.
 watch(error, (e) => {
-  if (e) ElMessage.error(e);
+  if (e) ElMessage.error(e.message);
 });
 </script>
 
 <style scoped>
+/* PlanA v1.0 visual pass — dialog + radio button + result alert surface. */
+:deep(.el-dialog) {
+  border-radius: var(--r-lg);
+}
+:deep(.el-dialog__header) {
+  padding: var(--s-5) var(--s-6) var(--s-3);
+}
+:deep(.el-dialog__title) {
+  font-family: var(--font-display);
+  font-size: var(--fs-18);
+  font-weight: 600;
+  letter-spacing: var(--ls-display);
+  color: var(--text-1);
+}
+:deep(.el-dialog__body) {
+  padding: var(--s-3) var(--s-6) var(--s-5);
+}
+:deep(.el-dialog__footer) {
+  padding: var(--s-3) var(--s-6) var(--s-5);
+  border-top: var(--hairline);
+}
+:deep(.el-radio-button__inner) {
+  border-radius: var(--r-sm);
+}
 .feedback-result {
-  margin-top: 12px;
+  margin-top: var(--s-3);
+  border-radius: var(--r-md);
 }
 </style>

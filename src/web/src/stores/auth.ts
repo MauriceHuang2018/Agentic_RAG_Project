@@ -3,16 +3,24 @@
 //   { access_token, token_type: "bearer", user: { id, username, is_super_admin, status } }
 // JWT decode is intentionally NOT done here: signature verification lives on
 // the server. We only inspect the payload client-side for `is_super_admin`
-// to short-circuit the rbac.guard.
+// to short-circuit the rbac.guard before /me/permissions resolves.
 //
-// T6.1 note: backend does not yet expose /me or /workspaces endpoints
-// (Explore agent 2026-09-01). User/perm state therefore bootstraps solely
-// from the login response until backend fills the gap.
+// Permission set lifecycle (post-M6 2026-09-02):
+//   * loginWithCredentials() optimistically seeds [PERMISSION_WILDCARD]
+//     when is_super_admin is true so super_admin can navigate freely
+//     before /me/permissions resolves.
+//   * Login.vue (and any other caller) should `await fetchMyPermissions()`
+//     after login to populate `permissions` with the real key set the
+//     backend aggregated across the user's workspace bindings.
+//   * Authoritative permission check still lives server-side in
+//     `dependencies.require_permission`; `permissions` is the rbac.guard
+//     UX gate only.
 
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { PERMISSION_WILDCARD } from '@/constants/permissions';
 import { login as apiLogin, logout as apiLogout } from '@/api/endpoints/auth';
+import { listMyPermissions } from '@/api/endpoints/me';
 
 const TOKEN_STORAGE_KEY = 'agentic_rag.access_token';
 
@@ -53,6 +61,13 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * Submit credentials and bootstrap session. Throws on 401 / 403 so the
    * Login.vue component can render the i18n error message.
+   *
+   * For super_admin users we optimistically seed `permissions` with the
+   * wildcard so the rbac.guard short-circuits immediately. Non-super_admin
+   * users get an empty `permissions` until the caller invokes
+   * `fetchMyPermissions()` (typically right after login in Login.vue).
+   * This keeps the Login→/chat hop fast for admins without locking
+   * non-admin users out of routes they should be allowed to enter.
    */
   async function loginWithCredentials(identity: string, password: string): Promise<void> {
     const result = await apiLogin({ username: identity, password });
@@ -63,8 +78,29 @@ export const useAuthStore = defineStore('auth', () => {
       isSuperAdmin: Boolean(result.user.isSuperAdmin),
       status: result.user.status,
     };
-    permissions.value = extractPermsFromUser(result.user);
+    // Optimistic seed: super_admin gets the wildcard immediately; everyone
+    // else starts empty and must call `fetchMyPermissions()` to populate.
+    permissions.value = result.user.isSuperAdmin ? [PERMISSION_WILDCARD] : [];
     persistToken(result.accessToken);
+  }
+
+  /**
+   * Fetch the caller's real permission set from `GET /me/permissions`
+   * and replace the optimistic `permissions` seed.
+   *
+   * Returns the deduplicated set for callers that want to render an
+   * "allowed actions" view (Page 11 etc.) without re-reading the store.
+   *
+   * Errors propagate — the caller (Login.vue) is responsible for
+   * deciding whether a transient 5xx should fall back to the optimistic
+   * seed or surface an error. We deliberately do NOT swallow the error
+   * here so the silent-failure mode that hid the original rbac bug
+   * (empty perms for everyone) cannot return.
+   */
+  async function fetchMyPermissions(): Promise<string[]> {
+    const next = await listMyPermissions();
+    setPermissions(next);
+    return permissions.value;
   }
 
   /** Server-side logout (no-op response) + local state wipe. */
@@ -85,7 +121,7 @@ export const useAuthStore = defineStore('auth', () => {
     persistToken(null);
   }
 
-  /** Re-evaluate after the backend starts returning a permission set on /me. */
+  /** Replace the permission set with a deduplicated copy of `next`. */
   function setPermissions(next: string[]): void {
     permissions.value = [...new Set(next)];
   }
@@ -99,18 +135,9 @@ export const useAuthStore = defineStore('auth', () => {
     userId,
     username,
     loginWithCredentials,
+    fetchMyPermissions,
     logout,
     clear,
     setPermissions,
   };
 });
-
-/**
- * Backend /auth/login response carries no `permissions` field today; the set
- * is reconstructed by `_resolve_user_context` server-side on each request.
- * Until backend starts returning it, we conservatively grant only the
- * wildcard to super_admin so the rbac.guard short-circuits for them.
- */
-function extractPermsFromUser(user: AuthUser): string[] {
-  return user.isSuperAdmin ? [PERMISSION_WILDCARD] : [];
-}

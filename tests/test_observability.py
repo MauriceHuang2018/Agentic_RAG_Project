@@ -880,6 +880,271 @@ def test_default_llm_synthesizer_records_tokens(
 
 
 # ---------------------------------------------------------------------------
+# M3.x synthesizer hang resilience — see
+# docs/m3_x_synthesizer_hang_resilience/SPEC_synthesizer-hang-resilience.md
+# ---------------------------------------------------------------------------
+
+
+def test_completion_with_metrics_retries_once_on_timeout_then_succeeds(
+    metrics: MetricsRegistry, monkeypatch
+) -> None:
+    """First attempt raises `litellm.exceptions.Timeout`, second succeeds.
+
+    The retry path must:
+      * call `litellm.completion` exactly twice
+      * return the second response (NOT the Timeout)
+      * record token usage exactly once (only the successful attempt)
+      * keep the inter-attempt sleep bounded — we patch the module-level
+        constant `_RETRY_SLEEP_SECONDS` to 0 so the suite stays fast
+        even on the retry path. If the constant doesn't exist yet the
+        test fails with AttributeError, which is the intended TDD signal.
+    """
+    import sys
+    import types
+
+    import litellm  # type: ignore[import-not-found]  # for the real Timeout class
+
+    from agentic_rag_project.observability import llm_metrics
+
+    # Zero out the inter-attempt sleep so retries don't slow the suite.
+    # TDD: this attribute MUST be added by the implementation. If it's
+    # missing the test fails loudly with AttributeError instead of
+    # silently sleeping 1.5s.
+    monkeypatch.setattr(llm_metrics, "_RETRY_SLEEP_SECONDS", 0)
+
+    call_count = {"n": 0}
+
+    def fake_completion(*, model, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # First attempt — simulate upstream hang that the proxy
+            # surfaces as `litellm.exceptions.Timeout`.
+            raise litellm.exceptions.Timeout(
+                message="fake upstream hang",
+                model=model,
+                llm_provider="dashscope",
+            )
+        # Second attempt — succeeds.
+        return _StubResponse(content="recovered", prompt=4, completion=6)
+
+    fake_module = types.ModuleType("litellm")
+    fake_module.completion = fake_completion  # type: ignore[attr]
+    # Mirror the real `litellm.exceptions` submodule so the production
+    # `except litellm.exceptions.Timeout` clause can resolve the symbol
+    # against our fake module.
+    fake_exceptions = types.ModuleType("litellm.exceptions")
+    fake_exceptions.Timeout = litellm.exceptions.Timeout  # type: ignore[attr]
+    fake_module.exceptions = fake_exceptions  # type: ignore[attr]
+    monkeypatch.setitem(sys.modules, "litellm", fake_module)
+    monkeypatch.setitem(sys.modules, "litellm.exceptions", fake_exceptions)
+
+    response = llm_metrics.completion_with_metrics(
+        model="openai/qwen3.7-plus",
+        messages=[{"role": "user", "content": "what is platform analytics?"}],
+        timeout=20.0,
+    )
+    assert call_count["n"] == 2, "should attempt exactly twice (1 initial + 1 retry)"
+    assert response["choices"][0]["message"]["content"] == "recovered"
+    # Token usage recorded exactly once — only the successful attempt
+    # contributes; the timed-out attempt has no `usage` field.
+    assert (
+        metrics.chat_tokens_total.labels(
+            model="openai/qwen3.7-plus", direction="in"
+        )._value.get()
+        == 4
+    )
+    assert (
+        metrics.chat_tokens_total.labels(
+            model="openai/qwen3.7-plus", direction="out"
+        )._value.get()
+        == 6
+    )
+
+
+def test_completion_with_metrics_propagates_timeout_after_one_retry(
+    metrics: MetricsRegistry, monkeypatch
+) -> None:
+    """Both attempts raise `litellm.exceptions.Timeout`.
+
+    The retry path must:
+      * call `litellm.completion` exactly twice (1 retry, not infinite)
+      * re-raise the second Timeout — NO silent fallback
+      * record NO tokens (both attempts failed before any usage data)
+    """
+    import sys
+    import types
+
+    import litellm  # type: ignore[import-not-found]  # for the real Timeout class
+
+    from agentic_rag_project.observability import llm_metrics
+
+    monkeypatch.setattr(llm_metrics, "_RETRY_SLEEP_SECONDS", 0)
+
+    call_count = {"n": 0}
+
+    def fake_completion(*, model, **kwargs):
+        call_count["n"] += 1
+        raise litellm.exceptions.Timeout(
+            message=f"fake upstream hang attempt {call_count['n']}",
+            model=model,
+            llm_provider="dashscope",
+        )
+
+    fake_module = types.ModuleType("litellm")
+    fake_module.completion = fake_completion  # type: ignore[attr]
+    fake_exceptions = types.ModuleType("litellm.exceptions")
+    fake_exceptions.Timeout = litellm.exceptions.Timeout  # type: ignore[attr]
+    fake_module.exceptions = fake_exceptions  # type: ignore[attr]
+    monkeypatch.setitem(sys.modules, "litellm", fake_module)
+    monkeypatch.setitem(sys.modules, "litellm.exceptions", fake_exceptions)
+
+    with __import__("pytest").raises(litellm.exceptions.Timeout):
+        llm_metrics.completion_with_metrics(
+            model="openai/qwen3.7-plus",
+            messages=[{"role": "user", "content": "what is platform analytics?"}],
+            timeout=20.0,
+        )
+    assert call_count["n"] == 2, "must stop after exactly 1 retry (no infinite loop)"
+    # No token recording on the failure path — neither attempt returned usage.
+    assert (
+        "('openai/qwen3.7-plus', 'in')"
+        not in metrics.chat_tokens_total._metrics
+    )
+
+
+def test_completion_with_metrics_emits_one_retry_log_per_attempt(
+    metrics: MetricsRegistry, monkeypatch
+) -> None:
+    """Each retry attempt emits exactly one `llm completion timed out`
+    warning — proves the second Timeout ALSO enters the except handler
+    (the original try/except nested retry missed this case because a
+    Timeout raised inside an `except` block is NOT re-caught by the
+    same `except`).
+
+    Asserts `retry_log_count == 1` for the two-attempt-fail scenario:
+    first attempt → log, second attempt → propagate (no log because
+    `is_last` short-circuits before `logger.warning`).
+    """
+    import logging
+    import sys
+    import types
+
+    import litellm  # type: ignore[import-not-found]
+
+    from agentic_rag_project.observability import llm_metrics
+
+    monkeypatch.setattr(llm_metrics, "_RETRY_SLEEP_SECONDS", 0)
+
+    def fake_completion(*, model, **kwargs):
+        raise litellm.exceptions.Timeout(
+            message="hang", model=model, llm_provider="dashscope"
+        )
+
+    fake_module = types.ModuleType("litellm")
+    fake_module.completion = fake_completion  # type: ignore[attr]
+    fake_exceptions = types.ModuleType("litellm.exceptions")
+    fake_exceptions.Timeout = litellm.exceptions.Timeout  # type: ignore[attr]
+    fake_module.exceptions = fake_exceptions  # type: ignore[attr]
+    monkeypatch.setitem(sys.modules, "litellm", fake_module)
+    monkeypatch.setitem(sys.modules, "litellm.exceptions", fake_exceptions)
+
+    log_records: list[str] = []
+
+    class _CaptureHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            log_records.append(record.getMessage())
+
+    handler = _CaptureHandler(level=logging.WARNING)
+    llm_metrics.logger.addHandler(handler)
+    try:
+        with __import__("pytest").raises(litellm.exceptions.Timeout):
+            llm_metrics.completion_with_metrics(
+                model="openai/qwen3.7-plus",
+                messages=[{"role": "user", "content": "hi"}],
+                timeout=20.0,
+            )
+    finally:
+        llm_metrics.logger.removeHandler(handler)
+
+    retry_logs = [
+        msg for msg in log_records
+        if "llm completion timed out" in msg
+    ]
+    assert len(retry_logs) == 1, (
+        "expected exactly one retry warning (1 attempt + 1 retry = 2 attempts, "
+        "warning logged once for the non-last attempt); "
+        f"got log records: {log_records}"
+    )
+
+
+def test_completion_with_metrics_defaults_num_retries_to_zero(
+    metrics: MetricsRegistry, monkeypatch
+) -> None:
+    """`completion_with_metrics` must inject `num_retries=0` AND
+    `max_retries=0` into the `litellm.completion` kwargs when the
+    caller doesn't pass either.
+
+    Why: litellm's own default is `num_retries=3` AND the openai
+    SDK underneath has `max_retries=2`. Two retry layers stacked
+    on top of ours turn a `timeout=20` budget into ~120s
+    `(3 + 2 + 1) × 20 = 120s` — verified empirically 2026-09-05:
+    against a 60s-hang stub, no-kwargs-cap → 144s, num_retries=0
+    only → 69s, num_retries=0 + max_retries=0 → 19.83s. By
+    force-defaulting both we own retry control via the for-loop
+    and keep the budget at `2 × 20 + 1.5 ≈ 41.5s`.
+
+    The wrapper MUST still respect a caller-passed `num_retries=N`
+    or `max_retries=N` — a future classifier override might want
+    litellm-internal retries, and silently overriding them would
+    break that path.
+    """
+    import sys
+    import types
+
+    from agentic_rag_project.observability import llm_metrics
+
+    captured_kwargs: dict = {}
+
+    def fake_completion(*, model, **kwargs):
+        captured_kwargs.update(kwargs)
+        return _StubResponse(content="ok", prompt=1, completion=1)
+
+    fake_module = types.ModuleType("litellm")
+    fake_module.completion = fake_completion  # type: ignore[attr]
+    monkeypatch.setitem(sys.modules, "litellm", fake_module)
+
+    # Case 1: caller doesn't pass either → wrapper injects both as 0.
+    llm_metrics.completion_with_metrics(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": "hi"}],
+        timeout=20.0,
+    )
+    assert captured_kwargs["num_retries"] == 0, (
+        "wrapper must default num_retries=0 so litellm-internal retries "
+        f"don't stack on top of ours; got {captured_kwargs.get('num_retries')!r}"
+    )
+    assert captured_kwargs["max_retries"] == 0, (
+        "wrapper must default max_retries=0 so openai-sdk's built-in "
+        f"retries don't stack on top of ours; got {captured_kwargs.get('max_retries')!r}"
+    )
+
+    # Case 2: caller passes num_retries=N → wrapper must NOT override it.
+    captured_kwargs.clear()
+    llm_metrics.completion_with_metrics(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": "hi"}],
+        timeout=20.0,
+        num_retries=2,
+    )
+    assert captured_kwargs["num_retries"] == 2, (
+        "wrapper must respect an explicit caller-supplied num_retries; "
+        f"got {captured_kwargs.get('num_retries')!r}"
+    )
+    # max_retries stays at our default of 0 since caller didn't override.
+    assert captured_kwargs["max_retries"] == 0
+
+
+# ---------------------------------------------------------------------------
 # T4.3 finalization — bearer token auth for /metrics
 # ---------------------------------------------------------------------------
 

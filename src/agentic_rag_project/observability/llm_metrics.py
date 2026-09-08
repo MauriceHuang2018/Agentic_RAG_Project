@@ -20,6 +20,32 @@ Why a wrapper instead of recording tokens inline? Three reasons:
   3. If we later swap LiteLLM for a different gateway, only this one
      file changes.
 
+Resilience (M3.x synthesizer hang, 2026-09-04 → 2026-09-05):
+`completion_with_metrics` retries **once** on
+`litellm.exceptions.Timeout` (the exception the litellm proxy raises
+when an upstream attempt times out — verified during the alice-chat
+8-minute-hang investigation). A single retry covers the common case
+of a transient upstream stall (the next attempt usually lands on a
+healthy connection in <1s) without masking genuine capacity problems
+(we still propagate the second Timeout, which FastAPI's global
+handler maps to a fast 500). Non-timeout exceptions (`BadRequestError`,
+`PermissionDeniedError`, etc.) bypass the retry path entirely so
+deterministic failures stay loud.
+
+Retry-budget discipline (2026-09-05): we also default
+`num_retries=0` AND `max_retries=0` on the litellm call and let
+our own for-loop own retry control. Litellm's own default is
+`num_retries=3` AND the openai SDK underneath has `max_retries=2`
+— both stack on top of ours, so a `timeout=20` caller-side budget
+can balloon to `(3 + 2 + 1) × 20 ≈ 120 s` per call
+(verified empirically 2026-09-05 against a 60s-hang stub: 144s).
+Forcing BOTH to 0 caps the chain at `2 × 20 + 1.5 ≈ 41.5 s` (one
+retry, one sleep) on the direct synthesizer path, matching the
+frontend's 120s axios timeout with comfortable headroom. Callers
+that want litellm-internal retries (none today, but a future
+classifier override is plausible) can still pass `num_retries=N`
+explicitly.
+
 Failures are non-fatal: if a provider omits `usage`, the wrapper
 silently records nothing — better than raising on the request hot path.
 """
@@ -27,11 +53,19 @@ silently records nothing — better than raising on the request hot path.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from agentic_rag_project.observability.chat_metrics import add_chat_tokens
 
 logger = logging.getLogger(__name__)
+
+
+# Module-level so tests can monkeypatch it to 0 and keep the suite
+# fast. Production reads the constant directly inside the retry loop.
+_RETRY_SLEEP_SECONDS: float = 1.5
+# Total number of attempts (initial + retries). 2 = one retry.
+_MAX_ATTEMPTS: int = 2
 
 
 def _extract_usage(response: Any) -> tuple[int, int]:
@@ -86,10 +120,45 @@ def completion_with_metrics(model: str, **kwargs: Any) -> Any:
 
     `litellm` is imported lazily inside the function. Tests can patch
     it via `monkeypatch.setitem(sys.modules, "litellm", fake)`.
+
+    Resilience: retries once on `litellm.exceptions.Timeout` after
+    sleeping `_RETRY_SLEEP_SECONDS`. Non-timeout exceptions propagate
+    immediately so deterministic failures stay loud. See module
+    docstring for the M3.x rationale.
+
+    Implementation note: we use a bounded `for` loop over `_MAX_ATTEMPTS`
+    rather than nesting a second `try` inside `except` because a second
+    Timeout inside the except handler would NOT be re-caught by the
+    same `except` clause — Python's try/except only guards the suite
+    under the matching `try`, not whatever runs inside its `except`
+    block. The loop captures every attempt under the same except
+    handler uniformly.
     """
     import litellm  # type: ignore[import-not-found]
 
-    response = litellm.completion(model=model, **kwargs)
+    # Force-disable litellm-internal retries. We own retry control via the
+    # for-loop below; allowing litellm's `num_retries=3` default AND the
+    # openai SDK's `max_retries=2` to layer on top of ours makes a
+    # `timeout=20` budget explode to ~120s
+    # (litellm 3 × openai-sdk 2 × our 2 = up to 12 attempts). Callers that
+    # genuinely want litellm-internal retries can still override via
+    # `completion_with_metrics(..., num_retries=N, max_retries=N)`.
+    kwargs.setdefault("num_retries", 0)
+    kwargs.setdefault("max_retries", 0)
+
+    response: Any = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            response = litellm.completion(model=model, **kwargs)
+            break
+        except litellm.exceptions.Timeout:
+            is_last = attempt == _MAX_ATTEMPTS - 1
+            if is_last:
+                raise
+            logger.warning(
+                "llm completion timed out; retrying once (model=%s)", model
+            )
+            time.sleep(_RETRY_SLEEP_SECONDS)
     record_completion_tokens(model=model, response=response)
     return response
 

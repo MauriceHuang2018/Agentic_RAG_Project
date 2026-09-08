@@ -1,0 +1,20 @@
+# Acme Cloud Pro
+
+Acme Cloud Pro is the flagship SaaS platform offered by Acme Corp.
+
+## Features
+
+- Multi-region active-active replication
+- End-to-end encryption with customer-managed keys
+- 99.99% uptime SLA
+- Usage-based pricing per workspace
+
+## Pricing
+
+Acme Cloud Pro is billed monthly based on consumed compute, storage, and egress.
+A free 14-day trial is available for new workspaces.
+
+## Getting Started
+
+Sign in at https://acme.example/login and create a workspace. The on-boarding
+wizard provisions a default project, an API key, and a sample dataset.

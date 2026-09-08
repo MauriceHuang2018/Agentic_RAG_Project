@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>企业级 Agentic RAG 智能问答系统 · 项目介绍</title>
+<style>
+  :root{
+    --bg:#ffffff;
+    --fg:#1f2328;
+    --muted:#5b6470;
+    --line:#e3e6ea;
+    --accent:#0b5fff;
+    --accent-soft:#eaf1ff;
+    --code-bg:#f5f7fa;
+    --code-fg:#1f2328;
+    --tag-bg:#f0f4ff;
+    --tag-fg:#0b5fff;
+    --ok:#1a7f37;
+    --warn:#bf8700;
+    --danger:#cf222e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Helvetica,Arial,sans-serif;
+    color:var(--fg);
+    background:var(--bg);
+    line-height:1.75;
+    font-size:15px;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 32px 80px}
+  header.hero{
+    border-bottom:1px solid var(--line);
+    padding-bottom:24px;margin-bottom:32px;
+  }
+  .eyebrow{
+    display:inline-block;font-size:12px;letter-spacing:.12em;
+    color:var(--accent);text-transform:uppercase;font-weight:600;
+    padding:4px 10px;border-radius:999px;background:var(--accent-soft);
+    margin-bottom:14px;
+  }
+  h1{font-size:34px;margin:0 0 8px;letter-spacing:-.5px}
+  h1 small{display:block;font-size:14px;color:var(--muted);font-weight:500;margin-top:6px;letter-spacing:0}
+  .lead{font-size:16px;color:var(--muted);max-width:780px;margin-top:16px}
+  .meta-row{margin-top:18px;display:flex;flex-wrap:wrap;gap:8px}
+  .tag{
+    font-size:12px;padding:3px 10px;border-radius:6px;
+    background:var(--tag-bg);color:var(--tag-fg);font-weight:500;
+  }
+  h2{
+    font-size:22px;margin:48px 0 14px;
+    padding-bottom:8px;border-bottom:1px solid var(--line);
+    letter-spacing:-.3px;
+  }
+  h2 .num{
+    display:inline-block;width:28px;height:28px;line-height:28px;
+    text-align:center;border-radius:6px;background:var(--accent);
+    color:#fff;font-size:13px;margin-right:10px;font-weight:700;
+    vertical-align:middle;
+  }
+  h3{font-size:17px;margin:24px 0 8px;color:var(--fg)}
+  p{margin:8px 0}
+  ul,ol{padding-left:22px;margin:8px 0}
+  li{margin:4px 0}
+  code{
+    font-family:"JetBrains Mono",Consolas,Menlo,monospace;
+    background:var(--code-bg);padding:1px 6px;border-radius:4px;
+    font-size:13px;color:var(--code-fg);
+  }
+  pre{
+    background:var(--code-bg);
+    padding:14px 16px;border-radius:8px;overflow-x:auto;
+    font-size:13px;line-height:1.6;margin:12px 0;
+    border:1px solid var(--line);
+  }
+  pre code{background:none;padding:0;font-size:13px}
+  table{
+    width:100%;border-collapse:collapse;margin:14px 0;font-size:14px;
+  }
+  th,td{
+    text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);
+    vertical-align:top;
+  }
+  th{
+    background:#fafbfc;font-weight:600;color:var(--fg);
+    border-bottom:2px solid var(--line);
+  }
+  .grid-2{
+    display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;
+  }
+  .card{
+    border:1px solid var(--line);border-radius:10px;padding:16px 18px;
+    background:#fff;
+  }
+  .card h4{margin:0 0 6px;font-size:14px;color:var(--muted);font-weight:600}
+  .card p{margin:0;color:var(--fg);font-size:14px}
+  .arch-object{
+    border:1px solid var(--line);border-radius:10px;overflow:hidden;
+    margin:14px 0;background:#fafbfc;
+  }
+  .arch-object object{display:block;width:100%;height:560px}
+  .arch-caption{
+    font-size:12px;color:var(--muted);padding:8px 14px;
+    border-top:1px solid var(--line);background:#fff;
+  }
+  .pillars{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0;
+  }
+  .pillar{
+    border:1px solid var(--line);border-radius:10px;padding:14px;
+    background:linear-gradient(180deg,#fafcff 0%,#fff 100%);
+  }
+  .pillar b{display:block;font-size:14px;margin-bottom:4px;color:var(--accent)}
+  .pillar span{font-size:13px;color:var(--muted)}
+  .mermaid-note{
+    background:var(--accent-soft);border-left:3px solid var(--accent);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:14px 0;
+    font-size:13px;color:var(--fg);
+  }
+  .footnote{
+    font-size:12px;color:var(--muted);margin-top:48px;
+    border-top:1px solid var(--line);padding-top:16px;
+  }
+  @media (max-width:760px){
+    .pillars,.grid-2{grid-template-columns:1fr}
+    .arch-object object{height:420px}
+    h1{font-size:26px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <span class="eyebrow">项目介绍 · v1.0</span>
+  <h1>企业级 Agentic RAG 智能问答系统
+    <small>Enterprise Agentic RAG Knowledge Q&A Platform · 一期 MVP</small>
+  </h1>
+  <p class="lead">
+    本文档面向评审和合作方，用 10 分钟讲清楚：项目要解决什么业务问题、产品目标是什么、业务与技术架构长什么样、核心模块怎么联动、关键指标与里程碑如何。一篇读懂这套系统的能力边界与当前进展。
+  </p>
+  <div class="meta-row">
+    <span class="tag">一期 MVP</span>
+    <span class="tag">私有化部署</span>
+    <span class="tag">Agentic RAG</span>
+    <span class="tag">权限感知</span>
+    <span class="tag">全链路评估</span>
+    <span class="tag">模型无关</span>
+  </div>
+</header>
+
+<nav class="mermaid-note">
+  <b>目录速览：</b>① 项目概述 ② 背景与目标 ③ 业务架构 ④ 技术架构 ⑤ 核心模块 ⑥ 关键流程与逻辑 ⑦ 关键指标 ⑧ 里程碑与交付 ⑨ 一行示例 ⑩ 文档与术语。
+</nav>
+
+<!-- ========== 1. 项目概述 ========== -->
+<h2><span class="num">1</span>项目概述</h2>
+<p>
+  本项目旨在构建一套<strong>企业级、基于检索增强生成（RAG）的通用智能问答系统</strong>。
+  通过 <em>混合检索架构（直搜 + Agentic RAG）</em> 实现<strong>高精度、可溯源、安全可控</strong>的智能问答体验，覆盖文档解析、知识库管理、问答、评估、治理、安全等完整链路。
+</p>
+<p>
+  一期（phase1-mvp）目标是<strong>端到端跑通 MVP</strong>：可演示、可迭代、关键指标可观测；二期在 GraphRAG、CDC 同步、视频解析、动态权限、PDCA 闭环等方向扩展。
+</p>
+
+<!-- ========== 2. 背景与目标 ========== -->
+<h2><span class="num">2</span>项目背景与目标</h2>
+
+<h3>2.1 业务痛点</h3>
+<p>随着企业知识资产规模持续增长，员工在日常工作中面临"信息过载"与"知识孤岛"的双重困境：</p>
+<ul>
+  <li>企业政策、产品手册等资料查找不便，咨询对接人耗时长；</li>
+  <li>文档分散在本地文件夹、网盘、邮件附件等多个位置，检索效率低；</li>
+  <li>传统关键词搜索无法理解语义，难以回答复杂业务问题；</li>
+  <li>大语言模型（LLM）存在幻觉风险，无法直接用于企业关键决策；</li>
+  <li>现有开源/商业方案在质量评估、数据治理、数据安全、成本可控性方面存在明显短板。</li>
+</ul>
+
+<h3>2.2 产品目标</h3>
+<div class="pillars">
+  <div class="pillar"><b>精准问答</b><span>多格式深度解析 + 混合检索，准确率行业领先</span></div>
+  <div class="pillar"><b>可信溯源</b><span>每条答案标注来源段落，可审计、可验证</span></div>
+  <div class="pillar"><b>智能协作</b><span>多智能体协作，复杂问题自动拆解、多跳推理</span></div>
+  <div class="pillar"><b>安全合规</b><span>数据驻留、权限感知、输出过滤、审计可追溯</span></div>
+  <div class="pillar"><b>成本可控</b><span>按问题复杂度路由通道，避免不必要的 Token 消耗</span></div>
+  <div class="pillar"><b>持续进化</b><span>全链路评估 + Drift Alarm 驱动系统迭代</span></div>
+</div>
+
+<h3>2.3 目标用户</h3>
+<table>
+  <thead>
+    <tr><th style="width:24%">角色</th><th>典型用途</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>普通员工（Users）</td><td>查询政策、产品手册、合同、分析报告、技术规范、历史项目文档</td></tr>
+    <tr><td>业务专家 / 文档责任人（DocOwner）</td><td>维护知识库质量，处理用户反馈</td></tr>
+    <tr><td>知识库管理员（KnowledgeAdmin）</td><td>配置监控健康度、审核 Bad Case、生成治理报告</td></tr>
+    <tr><td>IT / 安全管理员（SecurityAdmin）</td><td>查看审计日志、配置数据驻留策略、确保输出安全</td></tr>
+    <tr><td>企业决策者（Leadership）</td><td>查看统计报告、准确率趋势、用户满意度</td></tr>
+  </tbody>
+</table>
+
+<!-- ========== 3. 业务架构 ========== -->
+<h2><span class="num">3</span>业务架构</h2>
+<p>
+  业务架构自上而下分为 <strong>5 个能力层</strong>：用户交互层 → 智能路由层 → 检索引擎层 → 生成输出层 → 评估与治理层。
+  每一层各司其职，又通过统一的审计与评估"横切层"贯通全链路。
+</p>
+<div class="arch-object">
+  <object type="image/svg+xml" data="business-architecture.svg" aria-label="企业级 Agentic RAG 业务架构图">
+    您的浏览器无法渲染 SVG，可直接查看
+    <a href="business-architecture.svg">docs/architecture/business-architecture.svg</a>。
+  </object>
+  <div class="arch-caption">图 1 · 业务架构全景（来源：<code>business-architecture.svg</code>）</div>
+</div>
+
+<h3>3.1 五大能力层职责</h3>
+<table>
+  <thead>
+    <tr><th style="width:22%">层级</th><th>能力</th><th>关键产物</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>用户交互层</td>
+      <td>Web Chat UI、管理后台、REST / SDK</td>
+      <td>问答界面、文档管理、反馈查看、评估看板</td>
+    </tr>
+    <tr>
+      <td>智能路由层</td>
+      <td>问题分类器 + 成本路由决策</td>
+      <td>简单/复杂/精确三分类，路由到最优通道</td>
+    </tr>
+    <tr>
+      <td>检索引擎层</td>
+      <td>直搜通道、Agentic RAG、权限感知过滤</td>
+      <td>向量+BM25+Rerank、LangGraph 多跳推理、ACL Pre-filter</td>
+    </tr>
+    <tr>
+      <td>生成输出层</td>
+      <td>LLM 网关、引用溯源、输出过滤 / 脱敏</td>
+      <td>带引用的答案、敏感词过滤、隐私脱敏</td>
+    </tr>
+    <tr>
+      <td>评估与治理层</td>
+      <td>全链路评估、审计日志、数据治理</td>
+      <td>RAGAS 指标、WORM 审计、反馈闭环</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ========== 4. 技术架构 ========== -->
+<h2><span class="num">4</span>技术架构</h2>
+<p>
+  技术架构沿用业务架构的 5 层模型，并在底层叠加<strong>横切层</strong>（审计、评估、监控）。
+  关键设计原则：
+</p>
+<ul>
+  <li><strong>私有化部署</strong>：所有数据（文档、索引、日志、模型缓存）不出域，Docker Compose 单机起步；</li>
+  <li><strong>模型无关</strong>：业务代码只调 LiteLLM HTTP API，切换 LLM 仅改环境变量 <code>LITELLM_MODEL</code>，兼容 Kimi、Qwen、DeepSeek、GPT、本地 Ollama / vLLM 等；</li>
+  <li><strong>解析与切片解耦</strong>：格式分发器（<code>parser_router</code>）仅产出结构化 ParsedDoc，独立的 <code>chunker</code> 完成语义+层级切片，避免单一组件膨胀；</li>
+  <li><strong>检索阶段权限过滤</strong>：Qdrant payload pre-filter 在向量召回时就过滤无权文档，而非事后在 UI 层遮罩，从根本上防止提示词注入导致信息泄露；</li>
+  <li><strong>输入 / 输出双层合规</strong>：用户 query 必经 <code>query-guardrail</code>，LLM 输出再经 <code>post-processor</code>，命中规则时拒绝或脱敏。</li>
+</ul>
+
+<h3>4.1 核心技术栈</h3>
+<table>
+  <thead>
+    <tr><th style="width:18%">类别</th><th>选型</th><th>理由</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>LLM 网关</td><td>LiteLLM</td><td>OpenAI 兼容、模型路由、缓存与成本追踪</td></tr>
+    <tr><td>向量库</td><td>Qdrant</td><td>支持 payload pre-filter、BM25 hybrid</td></tr>
+    <tr><td>Agent 编排</td><td>LangGraph</td><td>图状态机、Checkpointer、多跳与反思</td></tr>
+    <tr><td>文档解析</td><td>格式分发器（5 × text_extractors）+ DeepDoc Server :9390</td><td>常见格式零依赖，复杂/扫描件走视觉路径</td></tr>
+    <tr><td>关系库</td><td>PostgreSQL + SQLAlchemy + Alembic</td><td>元数据 / 审计 / 反馈 / 评估落库</td></tr>
+    <tr><td>缓存 / 队列</td><td>Redis + Celery</td><td>会话缓存、批量导入、限流</td></tr>
+    <tr><td>Web 后端</td><td>FastAPI + Uvicorn</td><td>异步、类型驱动、OpenAPI 自动生成</td></tr>
+    <tr><td>Web 前端</td><td>Vue 3 + Vite + Element Plus + Pinia</td><td>团队熟悉度高、生态完善</td></tr>
+    <tr><td>评估</td><td>RAGAS + DeepEval</td><td>检索 / 生成 / 忠实度 / 引用准确率指标</td></tr>
+    <tr><td>监控</td><td>Prometheus + Grafana</td><td>指标采集、Drift Alarm、评估看板</td></tr>
+  </tbody>
+</table>
+
+<!-- ========== 5. 核心模块 ========== -->
+<h2><span class="num">5</span>核心模块</h2>
+
+<h3>5.1 文档解析（doc-processor）</h3>
+<p>
+  文档入库链路的起点。支持 TXT / PDF（文本型 & 扫描件 OCR）/ Word / Excel / PPT / 图片（P1）。
+  内部采用<strong>格式分发器（parser_router）</strong>：常见格式（PDF 文本层、DOCX、PPTX、XLSX、MD、TXT）由 <code>text_extractors</code> 直接抽取，零外部依赖；扫描件 / 复杂图像走 <code>visual_router</code>，调用独立的 DeepDoc Server（LitServe，<code>:9390</code>）提供的 <code>/predict/{dla,ocr,tsr}</code>，失败时降级到 RapidOCR。
+</p>
+
+<h3>5.2 切片与索引（chunker + indexer）</h3>
+<p>
+  <code>chunker</code> 独立完成语义+层级切片：<strong>父 chunk</strong> 章节级（用于先定位）、<strong>子 chunk</strong> 段落级（用于精排与引用）。
+  向量化后写入 Qdrant，payload 携带 <code>doc_id / workspace_id / acl / page_no / position</code> 等元数据，元数据（文档状态、责任人、权威等级等）落 PostgreSQL。
+</p>
+
+<h3>5.3 直搜通道（retrieval-direct）</h3>
+<p>
+  简单事实查询的默认通道。<strong>向量语义 + BM25 关键词 + Rerank</strong> 三路混合，结果经 Rerank 重排后送入生成。
+  长文档采用两阶段策略：先定位父 chunk（章节级），再在子 chunk（段落级）精排；128K 长上下文模型仅作 fallback（score < 阈值时由 LiteLLM 路由触发）。
+</p>
+
+<h3>5.4 Agentic RAG（agent-core）</h3>
+<p>
+  复杂多跳问题的求解通道。基于 <strong>LangGraph</strong> 图状态机实现：
+</p>
+<ol>
+  <li><strong>Plan 节点</strong>：拆解子查询，生成执行计划；</li>
+  <li><strong>Retrieve 节点 × N</strong>：多轮检索（调 <code>retrieval-direct</code>）；</li>
+  <li><strong>Reflect 节点</strong>：评估检索质量，不足则改写 / 切换数据源；</li>
+  <li><strong>Generate 节点</strong>：调用 LiteLLM 生成；</li>
+  <li><strong>Post-Processor</strong>：输出过滤与脱敏；</li>
+  <li>最大迭代次数 ≤ 5（可配置），防止无限循环与 Token 失控。</li>
+</ol>
+
+<h3>5.5 问题分类与成本路由（router）</h3>
+<p>
+  分类器判断问题类型（<code>simple / complex / exact</code>），路由策略可配置：
+</p>
+<ul>
+  <li><strong>简单事实</strong> → 直搜（目标 P95 < 500ms，低成本）；</li>
+  <li><strong>复杂多跳</strong> → Agentic RAG（带工具调用、多轮推理）；</li>
+  <li><strong>精确数值</strong> → 结构化数据查询（NL2SQL / API 调用）；</li>
+  <li>单次查询可设置 Token 预算熔断（默认 10K），超限自动降级或返回"建议拆分"。</li>
+</ul>
+
+<h3>5.6 引用溯源与答案生成（generator）</h3>
+<p>
+  答案生成后，每个事实点附带 <code>chunk_id</code> + 文档名 + 段落号，前端点击可跳转原文。
+  引用准确率纳入评估体系，要求 ≥ 95%。可选地为答案打"高可信 / 需核实"标签（P1）。
+</p>
+
+<h3>5.7 全链路评估（evaluation）</h3>
+<p>
+  评估指标覆盖"检索 → 生成 → 用户反馈"全链路：
+</p>
+<table>
+  <thead>
+    <tr><th>阶段</th><th>关键指标</th><th>目标</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>检索</td><td>Recall@K / Precision@K / Context Relevance / MRR</td><td>≥ 0.85</td></tr>
+    <tr><td>生成</td><td>Faithfulness / Answer Relevance / Citation Accuracy / Hallucination Rate</td><td>≥ 0.85，引用准确率 ≥ 95%，幻觉率 ≤ 10%</td></tr>
+    <tr><td>反馈</td><td>用户满意度 CSAT、反馈归类准确率</td><td>≥ 80% 自动归类</td></tr>
+    <tr><td>告警</td><td>Drift Alarm</td><td>连续 7 天某类问题准确率下降 > 5% 自动触发</td></tr>
+  </tbody>
+</table>
+
+<h3>5.8 安全与权限（auth-acl + rbac + guardrail + audit）</h3>
+<ul>
+  <li><strong>ACL（文档级）</strong>：读 / 写 / 管理权限，默认继承上传者；</li>
+  <li><strong>Workspace 隔离</strong>：不同部门 / 项目逻辑隔离；</li>
+  <li><strong>RBAC（角色级）</strong>：6 种内置角色（workspace_admin / kb_admin / doc_owner / chat_user / system_admin + auditor 弃用）+ 自定义角色 + 按 workspace 维度分配；全局超管走 <code>users.is_super_admin</code>；</li>
+  <li><strong>输入合规（query-guardrail）</strong>：用户 query 提交至 LLM 之前必经敏感词 / prompt injection / 个人信息检查；</li>
+  <li><strong>输出过滤（post-processor）</strong>：敏感词命中返回拒绝话术，个人隐私 / 商业敏感数据自动脱敏（如 <code>138****8888</code>）；</li>
+  <li><strong>审计日志</strong>：每次问答完整链路（用户身份、查询内容、检索文档、模型、Token、响应时间、引用源）保留 ≥ 180 天，WORM 防篡改。</li>
+</ul>
+
+<!-- ========== 6. 关键流程 ========== -->
+<h2><span class="num">6</span>关键流程与逻辑</h2>
+
+<h3>6.1 文档入库链路</h3>
+<pre><code>用户上传 ─→ 写入 PostgreSQL (status=pending)
+              │
+              ▼
+        Celery 异步任务触发
+              │
+              ▼
+   parser_router (格式分发)
+      ├─ 文本型 PDF / DOCX / PPTX / XLSX / TXT → text_extractors
+      └─ 扫描 PDF / 复杂图像 → DeepDoc Server :9390 (/predict/{dla,ocr,tsr})
+                                  └ 失败时降级 RapidOCR
+              │
+              ▼
+   chunker 语义+层级切片 (父 chunk 章节级 + 子 chunk 段落级)
+              │
+              ▼
+   Embedding 向量化 ─→ 写入 Qdrant (payload 携带 doc_id / workspace_id / acl)
+              │
+              ▼
+   PostgreSQL 状态置为 ready ─→ 前端可检索
+</code></pre>
+
+<h3>6.2 用户提问链路（以"复杂多跳"为例）</h3>
+<pre><code>用户问题
+   │
+   ▼
+[API Gateway] ─── 鉴权 ─── 写入 [Audit Log 起]
+   │
+   ▼
+[Query Guardrail] ─── 输入合规 ─── 不通过则拒绝并记录审计
+   │
+   ▼
+[Router] ── 分类:复杂 ──→ [Agent Core]
+   │                              │
+   │                              ▼
+   │                       [Plan Node] 拆解子查询
+   │                              │
+   │                              ▼
+   │                       [Retrieve Node] × N  (调 Retrieval Direct)
+   │                              │
+   │                              ▼
+   │                       [Reflect Node] 评估检索质量
+   │                              │
+   │                              ▼
+   │                       [Generate Node] 调用 LiteLLM 生成
+   │                              │
+   │                              ▼
+   │                       [Post-Processor] 过滤/脱敏
+   │                              │
+   │                              ▼
+   └──────────→ 返回答案 + 引用 chunk_id
+                          │
+                          ▼
+                  [Audit Log 终] · [Feedback 收集就绪]
+</code></pre>
+
+<h3>6.3 多轮对话与反馈闭环</h3>
+<ul>
+  <li><strong>多轮记忆</strong>：会话状态由 Redis 短期保存 + LangGraph Checkpointer 持久化，支持指代消解（如"刚才那份文档的第三章说了什么"）；</li>
+  <li><strong>追问引导（P1）</strong>：答案尾部推荐 3–5 个相关问题；</li>
+  <li><strong>反馈闭环</strong>：每轮对话后用户可 👍 / 👎 + 原因标签，反馈经 LLM 自动归类（检索 / 切片 / 生成 / 知识库 / 用户问题），结果进入评估看板与 Bad Case Top 10。</li>
+</ul>
+
+<!-- ========== 7. 关键指标 ========== -->
+<h2><span class="num">7</span>关键非功能指标</h2>
+<table>
+  <thead>
+    <tr><th style="width:26%">维度</th><th>指标</th><th>目标</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>性能（直搜）</td><td>P95 响应时间</td><td>≤ 2s</td></tr>
+    <tr><td>性能（Agentic）</td><td>P95 响应时间（含多轮推理）</td><td>≤ 10s</td></tr>
+    <tr><td>并发</td><td>同时在线用户数</td><td>≥ 200</td></tr>
+    <tr><td>解析吞吐</td><td>单节点处理能力</td><td>≥ 100 页/分钟</td></tr>
+    <tr><td>索引构建</td><td>批量导入速度</td><td>≥ 500 文档/小时</td></tr>
+    <tr><td>可用性</td><td>年停机时间</td><td>≥ 99.9%（< 8.76h/年）</td></tr>
+    <tr><td>故障恢复</td><td>RTO / RPO</td><td>≤ 30min / ≤ 1h</td></tr>
+    <tr><td>索引重建</td><td>10 万文档全量</td><td>≤ 4h</td></tr>
+    <tr><td>模型无关</td><td>切换 LLM 是否改业务代码</td><td>不改，仅改 <code>LITELLM_MODEL</code></td></tr>
+    <tr><td>部署</td><td>一键起停</td><td>Docker Compose</td></tr>
+  </tbody>
+</table>
+
+<!-- ========== 8. 里程碑 ========== -->
+<h2><span class="num">8</span>里程碑与交付</h2>
+<table>
+  <thead>
+    <tr><th style="width:8%">#</th><th style="width:24%">里程碑</th><th>交付物</th><th>验收口径</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>M1</td><td>基础设施 + 文档解析</td><td>Compose 起栈 / 5 格式解析 / Qdrant 索引 / PG 元数据</td><td>上传文档 → 可检索</td></tr>
+    <tr><td>M2</td><td>直搜通道 + 引用溯源</td><td>检索 API / Rerank / 引用标注 / 多轮记忆</td><td>简单问题端到端跑通</td></tr>
+    <tr><td>M3</td><td>Agentic RAG + 意图识别</td><td>LangGraph 编排 / 工具注册 / 反思修正 / 路由决策</td><td>复杂问题端到端跑通</td></tr>
+    <tr><td>M4</td><td>评估 + 反馈 + 治理</td><td>RAGAS/DeepEval / 反馈采集 / 自动归类</td><td>评估数据可见、可分析</td></tr>
+    <tr><td>M5</td><td>安全 + 权限 + 审计</td><td>RBAC + ACL + Guardrail + 审计日志</td><td>权限与合规测试通过</td></tr>
+    <tr><td>M6</td><td>Web UI + 管理后台 + 看板</td><td>聊天界面 / 文档管理 / 反馈查看 / Grafana 看板</td><td>全栈演示</td></tr>
+  </tbody>
+</table>
+<p>
+  一期 MVP 当前进展：M1–M5 全部闭环（ M5 安全收官 + 729/1/7 测试基线），M6 前端分 T6.1（已闭环）/ T6.2+（进行中）。
+</p>
+
+<!-- ========== 9. 一行示例 ========== -->
+<h2><span class="num">9</span>一行示例</h2>
+<p>下面给出一个最简单的提问调用，便于读者看到产品形态（仅作示例，不代表全部参数）：</p>
+<pre><code># 1) 提问
+curl -X POST http://localhost:8000/api/v1/chat/query \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "workspace_id": "<uuid>",
+        "question": "公司年假政策是怎么规定的？",
+        "stream": false
+      }'
+
+# 2) 反馈（👍 / 👎 + 原因）
+curl -X POST http://localhost:8000/api/v1/feedback \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "message_id": "<uuid>",
+        "score": -1,
+        "reason_tag": "answer_wrong"
+      }'
+</code></pre>
+
+<!-- ========== 10. 文档与术语 ========== -->
+<h2><span class="num">10</span>文档与术语</h2>
+
+<h3>10.1 配套文档</h3>
+<ul>
+  <li>产品需求：<code>Product_Design/企业级Agentic_RAG智能问答系统_PRD.docx</code></li>
+  <li>需求对齐：<code>docs/phase1-mvp/ALIGNMENT_phase1-mvp.md</code></li>
+  <li>共识与方案：<code>docs/phase1-mvp/CONSENSUS_phase1-mvp.md</code></li>
+  <li>架构设计：<code>docs/phase1-mvp/DESIGN_phase1-mvp.md</code></li>
+  <li>任务拆分：<code>docs/phase1-mvp/TASK_phase1-mvp.md</code></li>
+  <li>验收报告：<code>docs/phase1-mvp/ACCEPTANCE_phase1-mvp.md</code></li>
+  <li>业务架构图：<code>docs/architecture/business-architecture.svg</code></li>
+  <li>系统架构图：<code>docs/architecture/System-architecture.svg</code></li>
+  <li>README：<code>README.md</code></li>
+</ul>
+
+<h3>10.2 关键术语</h3>
+<table>
+  <thead><tr><th style="width:24%">术语</th><th>解释</th></tr></thead>
+  <tbody>
+    <tr><td>RAG</td><td>Retrieval-Augmented Generation，检索增强生成</td></tr>
+    <tr><td>Agentic RAG</td><td>具备自主规划、工具调用、多跳推理能力的智能体增强检索</td></tr>
+    <tr><td>直搜</td><td>基于向量语义检索 + BM25 关键词检索的混合检索模式</td></tr>
+    <tr><td>权限感知检索</td><td>在检索阶段即过滤用户无权访问的文档片段，而非 UI 层过滤</td></tr>
+    <tr><td>Chunk</td><td>文档切片后的最小语义单元</td></tr>
+    <tr><td>Workspace</td><td>逻辑隔离的知识库单元，对应部门、项目或租户</td></tr>
+    <tr><td>GraphRAG（二期）</td><td>基于知识图谱的检索增强生成，实体-关系-社区摘要实现全局洞察</td></tr>
+  </tbody>
+</table>
+
+<div class="footnote">
+  本文档版本 v1.0（2026-07-06）。内容以 <code>Product_Design/企业级Agentic_RAG智能问答系统_PRD.docx</code> 与 <code>docs/phase1-mvp/CONSENSUS_phase1-mvp.md</code> 为单一事实来源，后续随项目迭代更新。
+</div>
+
+</div>
+</body>
+</html>

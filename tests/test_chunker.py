@@ -58,12 +58,15 @@ def test_consecutive_text_blocks_merge_into_one_child() -> None:
         document_name="x", format="pdf",
         sections=[section], page_count=1,
     )
-    _, children = chunk_parsed_doc(parsed, document_id="doc-1")
+    _, children = chunk_parsed_doc(parsed, document_id="doc-1", workspace_id="ws-1")
     assert len(children) == 1
     assert children[0].block_kind == "text"
     assert "alpha" in children[0].content
     assert "beta" in children[0].content
     assert "gamma" in children[0].content
+    # P0 / 2026-09-03: every emitted child carries the parent document's
+    # workspace_id so the chat ACL filter has something to scope on.
+    assert children[0].workspace_id == "ws-1"
 
 
 def test_text_then_figure_caption_then_text_yields_three_children() -> None:
@@ -83,7 +86,7 @@ def test_text_then_figure_caption_then_text_yields_three_children() -> None:
         document_name="x", format="pdf",
         sections=[section], page_count=1,
     )
-    _, children = chunk_parsed_doc(parsed, document_id="doc-1")
+    _, children = chunk_parsed_doc(parsed, document_id="doc-1", workspace_id="ws-1")
     assert len(children) == 3
     assert [c.block_kind for c in children] == ["text", "figure_caption", "text"]
     # Atomic child's content is exactly the caption — not concatenated
@@ -108,7 +111,7 @@ def test_table_block_is_atomic_even_with_neighbouring_text() -> None:
         document_name="x", format="pdf",
         sections=[section], page_count=1,
     )
-    _, children = chunk_parsed_doc(parsed, document_id="doc-1")
+    _, children = chunk_parsed_doc(parsed, document_id="doc-1", workspace_id="ws-1")
     assert len(children) == 3
     assert [c.block_kind for c in children] == ["text", "table", "text"]
     assert "1 | 2" in children[1].content
@@ -135,7 +138,7 @@ def test_all_extended_atomic_kinds_flush_the_buffer() -> None:
         document_name="x", format="pdf",
         sections=[section], page_count=1,
     )
-    _, children = chunk_parsed_doc(parsed, document_id="doc-1")
+    _, children = chunk_parsed_doc(parsed, document_id="doc-1", workspace_id="ws-1")
     # 1 (before) + len(atomic kinds) + 1 (after) = 2 + N children
     assert len(children) == 2 + len(kinds_to_check)
     atomic_children = [c for c in children if c.block_kind != "text"]
@@ -158,7 +161,7 @@ def test_atomic_block_with_empty_text_still_emits_placeholder_child() -> None:
         document_name="x", format="pdf",
         sections=[section], page_count=1,
     )
-    _, children = chunk_parsed_doc(parsed, document_id="doc-1")
+    _, children = chunk_parsed_doc(parsed, document_id="doc-1", workspace_id="ws-1")
     assert len(children) == 1
     assert children[0].block_kind == "figure"
     assert "bbox=" in children[0].content

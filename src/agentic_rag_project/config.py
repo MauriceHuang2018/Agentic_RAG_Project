@@ -142,6 +142,27 @@ class Settings(BaseSettings):
     litellm_long_context_model: str = Field(default=_LITELLM_ROLES.get("long_context", "claude-sonnet-4-5"))
     litellm_long_context_threshold: float = Field(default=0.5)
 
+    # ===== Chat LLM call-site optimization (2026-09-05) =====
+    # Default: thinking OFF (kill qwen3.7-plus reasoning trace → drops
+    # synth 35s → 3-5s on real RAG prompts). Override to True for code-
+    # heavy or multi-hop agent tasks that benefit from reasoning.
+    #
+    # Per-call site:
+    #   * Direct synth  → default False (kill reasoning)
+    #   * Classifier    → default False (json_object already constrains output)
+    #   * Agent runner  → default True (complex multi-hop needs reasoning)
+    #
+    # LiteLLM pass-through for extra_body to DashScope is ~62% reliable
+    # (verified against qwen3.7-plus docs 2026-09-05). If extra_body is
+    # stripped, the reasoning trace reappears — see Fallback A in
+    # chat_service._execute_direct (Step 12, conditional on real probe).
+    direct_synth_max_tokens: int = Field(default=1024)
+    direct_synth_enable_thinking: bool = Field(default=False)
+    classifier_max_tokens: int = Field(default=200)
+    classifier_enable_thinking: bool = Field(default=False)
+    agent_synth_max_tokens: int = Field(default=1024)
+    agent_synth_enable_thinking: bool = Field(default=True)
+
     # RAGFlow DeepDoc Server (independent LitServe service, port 9390).
     # Used only by the visual_router for scanned PDFs and images; structured
     # formats (PDF text / DOCX / PPTX / XLSX / MD / TXT) bypass this entirely.
@@ -198,6 +219,10 @@ class Settings(BaseSettings):
     # in-process (see `tests/test_demo_data_seed.py::test_..._rotates`).
     demo_alice_password: str = Field(default="alice_pass")
     demo_bob_password: str = Field(default="bob_pass")
+    # Cross-workspace operator account (2026-09-08). Password default
+    # matches the alice/bob pattern; override via `.env`
+    # `DEMO_ADMIN_PASSWORD` for non-dev deployments.
+    demo_admin_password: str = Field(default="admin_pass")
 
 
 @lru_cache(maxsize=1)

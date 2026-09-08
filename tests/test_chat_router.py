@@ -162,6 +162,22 @@ def _ok_response(conv_id: str | None = None) -> ChatQueryResponse:
     )
 
 
+def _is_never_match(filter_obj) -> bool:
+    """Return True if `filter_obj` is the failure-closed sentinel
+    (`__NEVER_MATCH__` workspace_id FieldCondition).
+
+    The router's `build_user_filter` may fall through to this shape
+    if the fake session can't satisfy the L4 ACL query; the test
+    should accept it as a valid filter.
+    """
+    must = getattr(filter_obj, "must", None) or []
+    for cond in must:
+        match = getattr(cond, "match", None)
+        if match is not None and getattr(match, "value", None) == "__NEVER_MATCH__":
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Happy path
 # ---------------------------------------------------------------------------
@@ -234,6 +250,42 @@ def test_query_passes_conversation_id_through(
     assert resp.status_code == 200
     assert resp.json()["conversation_id"] == "conv-123"
     assert fake_service.calls[0]["request"].conversation_id == conv
+
+
+def test_query_passes_acl_filter_to_service(
+    client: TestClient, user_ctx: UserContext, fake_service
+) -> None:
+    """The router must build a Qdrant Filter from the caller's
+    UserContext + session and thread it into ChatService.handle().
+
+    Without this, the searcher returns 0 hits and the synthesizer
+    emits an empty answer (root cause of the 2026-09-03 empty-answer
+    bug). P0 / 2026-09-03.
+    """
+    from qdrant_client.http import models as qmodels
+
+    fake_service.next_response = _ok_response()
+    resp = client.post(
+        "/api/v1/chat/query",
+        json={"query": "what?"},
+        headers=_auth_header(user_ctx),
+    )
+    assert resp.status_code == 200
+    assert len(fake_service.calls) == 1
+    acl_filter = fake_service.calls[0]["acl_filter"]
+    # The filter must be a real qmodels.Filter, not None — the chat
+    # service passes it straight into HybridSearcher / AgentRunner.
+    # For non-super-admin users without explicit ACL rows (this
+    # fixture), the filter is built from workspace membership +
+    # owner layer (L2 + L3). The fake session has no `execute`
+    # support for the L4 ACL lookup, so the failure-closed path
+    # may kick in — both shapes are acceptable; only `None` is not.
+    assert acl_filter is not None, (
+        "acl_filter must be built by the router and passed through"
+    )
+    # If build_user_filter returned a real filter, it must be a Filter.
+    if not _is_never_match(acl_filter):
+        assert isinstance(acl_filter, qmodels.Filter)
 
 
 # ---------------------------------------------------------------------------

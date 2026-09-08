@@ -19,6 +19,7 @@ export default {
   },
   chat: {
     placeholder: '请输入你的问题…',
+    inputHint: '按 Enter 发送 · Shift + Enter 换行',
     send: '发送',
     stop: '停止生成',
     feedbackLike: '有帮助',
@@ -34,6 +35,12 @@ export default {
       prompt_injection: '提问包含越权指令，已记录审计',
       pii: '提问包含个人敏感信息（PII），已脱敏处理或被拒',
       out_of_scope: '问题超出本系统支持的范围（仅限 KB 内检索）',
+    },
+    upload: {
+      tooltip: '上传文档（支持多选）',
+      unsupported: '"{name}" 格式不支持，已跳过（仅支持 PDF/DOCX/PPTX/XLSX/MD/TXT）',
+      success: '"{name}" 已提交处理，可在文档列表查看进度',
+      failed: '"{name}" 上传失败：{message}',
     },
   },
   feedback: {

@@ -32,6 +32,7 @@ from typing import Any, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from qdrant_client.http import models as qmodels
 
 from agentic_rag_project.agent_core.runner import (
     AgentRunner,
@@ -180,6 +181,7 @@ class ChatService:
         user_id: uuid.UUID,
         workspace_id: uuid.UUID,
         default_conversation_title: str = "",
+        acl_filter: qmodels.Filter | None = None,
     ) -> ChatQueryResponse:
         """Process one `POST /chat/query` synchronously.
 
@@ -195,6 +197,15 @@ class ChatService:
 
         The caller (router) controls commit/rollback; we only flush()
         so child rows can reference parent's id.
+
+        `acl_filter` is the Qdrant pre-filter built by the router via
+        `acl_filter.build_user_filter(ctx, session)`. Stored on
+        `self._acl_filter` for the request lifecycle so both the
+        direct path (TwoStageSearcher) and the agent path
+        (AgentRunner) scope retrieval to the caller's permitted
+        documents. Without this, the searcher returns 0 hits and
+        the synthesizer emits an empty answer — the root cause of
+        the 2026-09-03 empty-answer bug. P0 / 2026-09-03.
         """
         if not request.query or not request.query.strip():
             raise EmptyQueryError("query must be a non-empty string")
@@ -218,7 +229,8 @@ class ChatService:
         history_prompt = self._load_history_prompt(conversation.id)
 
         route_decision = self._decide_route(request.query)
-        acl_filter = self._build_acl_filter(workspace_id, request.acl_filter)
+        # Stash for the request lifecycle — both paths read it.
+        self._acl_filter = acl_filter
 
         if route_decision.is_direct():
             outcome: DirectPathOutcome | AgentPathOutcome = self._execute_direct(
@@ -381,16 +393,28 @@ class ChatService:
         self,
         workspace_id: uuid.UUID,
         extra: dict[str, Any] | None,
-    ) -> dict[str, Any]:
-        """Combine workspace scope with caller-supplied clauses.
+    ) -> qmodels.Filter | None:
+        """DEPRECATED — kept only for backward-compatible signature.
 
-        TwoStageSearcher / AgentRunner accept a dict-shape filter today;
-        T5.3 will project this into a real Qdrant `Filter`.
+        The actual filter is now built by the router via
+        `acl_filter.build_user_filter(ctx, session)` and threaded
+        straight into `handle(acl_filter=...)`. This stub is
+        removed by 2026-09-03 / P0 workspace_id_pipeline work — see
+        docs/workspace_id_pipeline/. When removed, callers see
+        AttributeError, which is the intended loud-fail signal.
         """
-        out: dict[str, Any] = {"workspace_id": str(workspace_id)}
-        if extra:
-            out.update(extra)
-        return out
+        # Build a minimal filter using only the workspace scope so
+        # any leftover caller (tests / admin tooling) still gets
+        # *some* scoping instead of an open retriever. Direct
+        # callers in this repo are gone after T10–T11.
+        return qmodels.Filter(
+            must=[
+                qmodels.FieldCondition(
+                    key="workspace_id",
+                    match=qmodels.MatchValue(value=str(workspace_id)),
+                )
+            ]
+        )
 
     # ------------------------------------------------------------------
     # path: direct
@@ -402,8 +426,25 @@ class ChatService:
         query: str,
         history_prompt: str,
     ) -> DirectPathOutcome:
-        ts: TwoStageResult = self.two_stage.two_stage_search(query)
-        if ts.fallback_triggered or not ts.children:
+        ts: TwoStageResult = self.two_stage.two_stage_search(
+            query, acl_filter=self._acl_filter
+        )
+        # `fallback_triggered` here means two different things depending
+        # on the TwoStageSearcher path:
+        #   * stage-1 produced parents but the top score was below
+        #     `fallback_threshold` — long-document intent switch; the
+        #     caller wants the long-context model, not direct synthesis.
+        #   * stage-1 produced NO parents and the searcher fell back to
+        #     a single-stage search (2026-09-04, when the indexer only
+        #     writes children to Qdrant). In that case `ts.children`
+        #     carries the single-stage hits and we synthesise from them
+        #     directly — falling back to empty here would silently kill
+        #     every short-document query.
+        # So the "no answer" path is only when we have NO children at
+        # all; otherwise we synthesise from whatever the searcher
+        # returned and surface `fallback_triggered` on the outcome so
+        # observability still sees the long-context intent signal.
+        if not ts.children:
             return DirectPathOutcome(
                 answer="",
                 citations=[],
@@ -421,6 +462,18 @@ class ChatService:
             for h in hits
         ]
         prompt = self._build_direct_prompt(query, hits, history_prompt)
+        # Build per-call knobs from Settings. Direct synth defaults to
+        # thinking OFF — qwen3.7-plus is a reasoning model and the
+        # 3077 reasoning_tokens on a real RAG prompt are pure waste
+        # for a direct lookup. See Step 4 / 2026-09-05.
+        from agentic_rag_project.config import get_settings
+
+        settings = get_settings()
+        synth_opts: dict = {}
+        if settings.direct_synth_max_tokens:
+            synth_opts["max_tokens"] = settings.direct_synth_max_tokens
+        if not settings.direct_synth_enable_thinking:
+            synth_opts["extra_body"] = {"enable_thinking": False}
         answer = self.direct_synthesizer.synthesize(
             system_prompt=(
                 "You are an answer synthesizer for a corporate RAG system. "
@@ -428,11 +481,23 @@ class ChatService:
                 "provided `[chunk_id]`."
             ),
             user_prompt=prompt,
-            timeout=30.0,
+            # 45s per-attempt budget. qwen3.7-plus is a reasoning model whose
+            # thinking trace on a real RAG prompt (≈4.6KB context, top-5 chunks)
+            # measured 34.7s end-to-end on 2026-09-05 (reasoning_tokens=3077,
+            # completion_tokens=1994). The prior 20s budget cut every real
+            # direct-path synthesis off mid-generation → litellm.Timeout → 500.
+            # 45s covers the observed 35s with ~10s headroom; the single retry
+            # in completion_with_metrics is reserved for genuine transient
+            # stalls, not normal generation time.
+            timeout=45.0,
+            **synth_opts,
         )
         answer = answer[: self.direct_answer_chars]
         return DirectPathOutcome(
-            answer=answer, citations=citations, route="direct"
+            answer=answer,
+            citations=citations,
+            route="direct",
+            fallback_triggered=ts.fallback_triggered,
         )
 
     def _build_direct_prompt(
@@ -462,12 +527,15 @@ class ChatService:
         max_iterations: int,
     ) -> AgentPathOutcome:
         # The runner's `.run()` builds its own AgentState internally,
-        # so we just pass query + max_iterations as kwargs.
+        # so we just pass query + max_iterations as kwargs. The
+        # per-call `acl_filter` overrides the runner's constructor
+        # default so this request scopes retrieval to the caller.
         try:
             result = self.agent_runner.run(
                 query,
                 user_context={"max_iterations": max_iterations},
                 history=None,
+                acl_filter=self._acl_filter,
             )
         except AgentRunnerError as exc:
             raise ChatServiceError(f"agent runner failed: {exc}") from exc

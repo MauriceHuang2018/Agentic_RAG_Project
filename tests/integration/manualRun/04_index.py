@@ -103,10 +103,12 @@ def bootstrap_smoke_doc(document_id: str, document_name: str) -> None:
             session.flush()
 
         # 3. Document — workspace_id + owner_id resolve the chunks FK later.
-        # Convert the human-readable doc_id to the same UUID the indexer
-        # uses (`_chunk_uuid(document_id)`), otherwise PG rejects the row
-        # as non-UUID. Mirrors indexer._chunk_uuid to stay aligned.
-        doc_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, f"agentic-rag-project/{document_id}")
+        # Indexer now applies `uuid.UUID(document_id)` (no more hashing —
+        # documents.id is a canonical UUID, not a derived UUID5), so the
+        # doc seeded here MUST be a real UUID. Pre-2026-09-04 we mirrored
+        # indexer._chunk_uuid() to derive a UUID5 — that's the wrong
+        # direction now (it would break the chunks.document_id FK).
+        doc_uuid = uuid.UUID(document_id)
         existing = session.get(Document, doc_uuid)
         if existing is None:
             session.add(

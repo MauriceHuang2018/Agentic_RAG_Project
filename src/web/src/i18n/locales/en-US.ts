@@ -19,6 +19,7 @@ export default {
   },
   chat: {
     placeholder: 'Ask a question…',
+    inputHint: 'Press Enter to send · Shift + Enter for newline',
     send: 'Send',
     stop: 'Stop',
     feedbackLike: 'Helpful',
@@ -34,6 +35,12 @@ export default {
       prompt_injection: 'Privileged-instruction attempt detected and logged.',
       pii: 'PII detected — masked or rejected.',
       out_of_scope: 'Out of scope (knowledge base only).',
+    },
+    upload: {
+      tooltip: 'Upload documents (multi-select supported)',
+      unsupported: '"{name}" skipped — only PDF/DOCX/PPTX/XLSX/MD/TXT are supported',
+      success: '"{name}" submitted — see document list for processing status',
+      failed: '"{name}" upload failed: {message}',
     },
   },
   feedback: {

@@ -16,7 +16,7 @@ inject a custom `model_resolver` for tests / multi-tenant setups).
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable
 
 from agentic_rag_project.observability.llm_metrics import completion_with_metrics
 
@@ -45,7 +45,17 @@ class DefaultLLMSynthesizer:
         system_prompt: str,
         user_prompt: str,
         timeout: float,
+        **kwargs: Any,
     ) -> str:
+        """Synthesize one answer.
+
+        Extra kwargs (`max_tokens`, `extra_body`, `temperature`, ...)
+        are forwarded verbatim to `completion_with_metrics` → `litellm.completion`.
+        The chat-service layer assembles these from
+        `Settings.direct_synth_*` knobs. Unknown kwargs flow through
+        unchanged so new LiteLLM-supported params (e.g. `stream`) can
+        be wired without touching this class.
+        """
         from agentic_rag_project.config import get_settings
 
         settings = get_settings()
@@ -63,6 +73,7 @@ class DefaultLLMSynthesizer:
                 {"role": "user", "content": user_prompt},
             ],
             timeout=timeout,
+            **kwargs,
         )
         return response["choices"][0]["message"]["content"] or ""
 

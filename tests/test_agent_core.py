@@ -542,3 +542,49 @@ def test_run_retrieval_dedupes_parents_and_children() -> None:
     hits = run_retrieval(Stub(), "q")
     chunk_ids = [h.chunk_id for h in hits]
     assert chunk_ids == ["p1", "c1"]
+
+
+# ---------------------------------------------------------------------------
+# Step 10 / 2026-09-05 — default_agent_llm_call Settings injection.
+# ---------------------------------------------------------------------------
+
+
+def test_default_agent_llm_call_threads_settings(monkeypatch) -> None:
+    """Agent path applies Settings.agent_synth_* when caller passes no kwargs.
+
+    Default: thinking ON (multi-hop benefits from reasoning) +
+    max_tokens=1024. The function must NOT inject extra_body when
+    `agent_synth_enable_thinking` is True (the default) and must
+    inject max_tokens=1024 only when the caller didn't override.
+    """
+    from agentic_rag_project.config import get_settings
+    from agentic_rag_project.agent_core.runner import default_agent_llm_call
+
+    get_settings.cache_clear()
+    captured: dict[str, Any] = {}
+
+    def _fake_completion(**kwargs):
+        captured.update(kwargs)
+        return {
+            "choices": [
+                {"message": {"content": "ok", "role": "assistant"}},
+            ],
+        }
+
+    # Monkeypatch the symbol the runner module already imported.
+    import agentic_rag_project.agent_core.runner as _runner_mod
+
+    monkeypatch.setattr(_runner_mod, "completion_with_metrics", _fake_completion)
+
+    default_agent_llm_call("sys", "user", 30.0)
+
+    # Default agent_synth_enable_thinking=True → no extra_body injected.
+    assert "extra_body" not in captured, (
+        "thinking ON must not inject extra_body={enable_thinking: False}"
+    )
+    # max_tokens injected from Settings default.
+    assert captured.get("max_tokens") == 1024
+    # timeout + model + messages still flow through.
+    assert captured.get("timeout") == pytest.approx(30.0)
+    assert captured.get("model") == get_settings().litellm_model
+    assert len(captured.get("messages", [])) == 2
