@@ -366,7 +366,7 @@ Agentic_RAG_Project/
 
 ---
 
-## 十、版本里程碑
+## 九、版本里程碑
 
 | Milestone | 说明 | 测试基线 |
 |-----------|------|----------|
@@ -384,7 +384,7 @@ Agentic_RAG_Project/
 
 ---
 
-## 十一、贡献指南
+## 十、贡献指南
 
 1. 动手前先读 [`AGENTS.md`](./AGENTS.md)：红线、命名规范、提交粒度
 2. 新需求走 **6A 工作流**（[`docs/.claude/rules/6a-workflow.md`](./.claude/rules/6a-workflow.md)）：ALIGNMENT → CONSENSUS → DESIGN → TASK → ACCEPTANCE
@@ -394,8 +394,9 @@ Agentic_RAG_Project/
 
 ---
 
-## 十二、许可证与声明
+## 十一、许可证与声明
 
+- 本项目遵循 Apache License 2.0，详见 [LICENSE](./LICENSE)
 - 本项目为**原型**，生产部署前需完成第三方安全审计
 - 默认模型为 DashScope（Qwen/DeepSeek 系列），需自备 API Key
 - 部分代码参考 DeepDoc / LangGraph / LiteLLM 等开源项目，遵循各自许可证
