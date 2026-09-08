@@ -11,10 +11,28 @@ Design notes:
     doesn't drop audit data (see `AuditService.flush_buffer`).
   - Beat schedule lives next to the other L0/L3 collectors so the
     cadence conversation stays in one file.
+
+Retry policy (M6 debug fix 2026-09-08):
+
+  The pre-fix `autoretry_for=(Exception,)` caused a dead-loop on
+  FK violations: `IntegrityError` is a *logical* error (the row
+  references a non-existent user), so re-running the same task
+  just replays the same broken payload forever.
+
+  The new policy restricts `autoretry_for` to transient
+  infrastructure errors:
+    - `redis.exceptions.RedisError` — Redis is down/flapping.
+    - `sqlalchemy.exc.OperationalError` — PG connection lost.
+  Both are recoverable on the next beat tick. `IntegrityError`
+  is handled by the service layer (moved to dead-letter and
+  task returns 0), so the task never raises it.
 """
 from __future__ import annotations
 
 import logging
+
+import redis
+import sqlalchemy as sa
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +50,12 @@ def make_flush_audit_buffer_task():
 
     @celery_app.task(
         name="agentic_rag_project.audit.flush_audit_buffer",
-        autoretry_for=(Exception,),
+        # Transient infra errors only — `IntegrityError` is a logical
+        # error handled by the service layer (dead-letter, ack success).
+        autoretry_for=(redis.RedisError, sa.exc.OperationalError),
         retry_backoff=True,
         retry_backoff_max=60,
-        retry_kwargs={"max_retries": 3},
+        retry_kwargs={"max_retries": 5},
     )
     def _task(batch_size: int = 100) -> int:
         # Redis client is module-scoped in api_gateway.dependencies

@@ -24,6 +24,19 @@ Background path:
     bulk-INSERT buffered events. Flush does NOT increment the
     Prometheus counter (it drains Redis, not record()).
 
+Orphan resilience (M6 debug fix 2026-09-08):
+  - `flush_buffer` runs a pre-flight query
+    `SELECT id FROM users WHERE id = ANY(:ids)` and NULLs out any
+    `user_id` not present in the result. The column is nullable
+    (per the 0001 + 0011 schema), so the bulk INSERT proceeds.
+  - On `IntegrityError` (FK violation, schema drift, etc.),
+    payloads are moved to `audit:buffer:dead` (a sibling Redis
+    list) instead of being requeued to the main buffer. The
+    celery task acks success — no autoretry storm.
+  - Transient infra errors (`OperationalError`, `RedisError`)
+    still requeue to the main buffer so the next beat tick
+    retries them.
+
 Reuses the project-wide `AuditLog` ORM model (`db.models.audit`) so we
 do not maintain a parallel metadata registry. `sanitized_query`
 is stored under `extra["sanitized_query"]` to avoid an extra DDL
@@ -40,8 +53,10 @@ from datetime import datetime
 
 import redis
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from agentic_rag_project.db.models import User
 from agentic_rag_project.db.models.audit import AuditLog
 
 from .events import AuditEvent
@@ -51,6 +66,12 @@ logger = logging.getLogger(__name__)
 
 # Default Redis key (DESIGN §4.4 explicit).
 DEFAULT_BUFFER_KEY = "audit:buffer"
+
+# Dead-letter key — payloads that fail `bulk_insert_mappings` with a
+# logical error (FK violation, schema drift, etc.) are LPUSHed here
+# instead of the main buffer. Operators can inspect with
+# `redis-cli LRANGE audit:buffer:dead 0 -1` after an alert.
+DEAD_LETTER_BUFFER_KEY = "audit:buffer:dead"
 
 
 # Actions that represent a denied request (probe attack signal).
@@ -198,6 +219,30 @@ class AuditService:
 
         Returns the number of rows written. Empty buffer → 0.
         Designed to be called by Celery beat every 5 s.
+
+        Orphan resilience (M6 debug fix 2026-09-08):
+
+        1. **Pre-flight user_id filter**: issues a single
+           `SELECT id FROM users WHERE id = ANY(:uids)` and NULLs
+           any `user_id` not in the result. The `user_id` column is
+           nullable (per the 0001 + 0011 schema), so the bulk
+           INSERT proceeds; the DB-side `audit_logs_orphan_safety`
+           trigger (alembic 0017) is a second-line defense.
+
+        2. **Logical errors → dead-letter**: if
+           `bulk_insert_mappings` raises `IntegrityError` (e.g.
+           schema drift the service layer didn't anticipate), the
+           popped payloads are LPUSHed to `audit:buffer:dead`
+           with a `{"reason": ..., "raw": ...}` envelope, and the
+           method returns 0 WITHOUT raising. Celery acks the task
+           as success and does NOT autoretry — re-trying the same
+           broken row achieves nothing.
+
+        3. **Transient infra errors → requeue**: `OperationalError`
+           (PG connection lost) and any non-`IntegrityError`
+           exception follow the pre-fix requeue path: LPUSH the
+           payloads back to `audit:buffer` head and raise so
+           celery can retry on the next beat tick.
         """
         payloads: list[str] = []
         for _ in range(batch_size):
@@ -242,11 +287,59 @@ class AuditService:
 
         if not mappings:
             return 0
+
+        # Pre-flight: NULL out orphan user_ids in one round-trip.
+        # `workspace_id` currently lives under `extra` (snapshot
+        # pattern), so the FK on the column is satisfied by
+        # definition. The DB-level trigger (alembic 0017) covers
+        # any future code path that might write to the column.
+        candidate_uids = {
+            m["user_id"] for m in mappings if m["user_id"] is not None
+        }
+        if candidate_uids:
+            try:
+                with self._session_factory() as session:
+                    existing_rows = session.execute(
+                        select(User.id).where(User.id.in_(candidate_uids))
+                    ).all()
+                existing_uids = {row[0] for row in existing_rows}
+            except OperationalError:
+                # PG is unreachable — let the bulk-insert path
+                # raise and the outer except handle the requeue.
+                existing_uids = set()
+        else:
+            existing_uids = set()
+        for m in mappings:
+            if m["user_id"] is not None and m["user_id"] not in existing_uids:
+                logger.info(
+                    "audit_flush_null_orphan_user_id",
+                    extra={
+                        "orphan_user_id": str(m["user_id"]),
+                        "action": m.get("action"),
+                    },
+                )
+                m["user_id"] = None
+
         try:
             with self._session_factory() as session:
                 session.bulk_insert_mappings(AuditLog, mappings)
                 session.commit()
+        except IntegrityError as exc:
+            # Logical error — requeueing would loop forever.
+            # Move payloads to dead-letter and ack success.
+            logger.error(
+                "audit_flush_integrity_error_dead_letter",
+                extra={
+                    "error": str(exc),
+                    "count": len(mappings),
+                    "dead_letter_key": DEAD_LETTER_BUFFER_KEY,
+                },
+            )
+            self._dead_letter(payloads, reason=str(exc))
+            return 0
         except Exception as exc:  # noqa: BLE001
+            # Transient infra error — requeue to main buffer and
+            # raise so celery autoretry fires.
             logger.error(
                 "audit_flush_failed_requeue",
                 extra={"error": str(exc), "count": len(mappings)},
@@ -262,6 +355,36 @@ class AuditService:
                     break
             raise
         return len(mappings)
+
+    def _dead_letter(
+        self,
+        payloads: list[str],
+        *,
+        reason: str,
+    ) -> None:
+        """Move poisoned payloads to the dead-letter buffer.
+
+        Each entry is an envelope:
+            {"reason": "<error message>", "raw": "<original JSON>"}
+
+        Operators can inspect with
+        `redis-cli LRANGE audit:buffer:dead 0 -1` after an alert.
+        Redis failures during the LPUSH are logged at ERROR but
+        do NOT raise — losing the dead-letter entry is preferable
+        to crashing the celery task.
+        """
+        for raw in payloads:
+            envelope = json.dumps(
+                {"reason": reason, "raw": raw}, ensure_ascii=False
+            )
+            try:
+                self._redis.lpush(DEAD_LETTER_BUFFER_KEY, envelope)
+            except redis.RedisError as exc:
+                logger.error(
+                    "audit_dead_letter_lpush_failed",
+                    extra={"error": str(exc), "lost_payload_preview": raw[:120]},
+                )
+                break
 
     # ------------------------------------------------------------------
     # admin query
@@ -324,5 +447,6 @@ class AuditService:
 
 __all__ = [
     "DEFAULT_BUFFER_KEY",
+    "DEAD_LETTER_BUFFER_KEY",
     "AuditService",
 ]
